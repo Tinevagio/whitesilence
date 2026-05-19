@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Confidentialité — WhiteSilence</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         max-width: 720px; margin: 2em auto; padding: 0 1.2em;
+         line-height: 1.55; color: #2d3748; }
+  h1 { font-size: 2em; margin-bottom: 0.2em; }
+  h2 { font-size: 1.25em; margin-top: 2em; color: #1a365d; }
+  .lead { font-size: 1.1em; font-weight: 600; color: #1a365d;
+          padding: 1em; background: #ebf4f8; border-radius: 8px; }
+  ul { padding-left: 1.2em; }
+  li { margin: 0.4em 0; }
+  footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #e2e8f0;
+           font-size: 0.9em; color: #718096; }
+  a { color: #2b6cb0; }
+</style>
+</head>
+<body>
+
+<h1>Confidentialité — WhiteSilence</h1>
+
+<p class="lead">En une phrase : WhiteSilence ne collecte aucune donnée personnelle. Tout reste sur ton téléphone.</p>
+
+<h2>Ce que l'app utilise sur ton téléphone</h2>
+<ul>
+  <li><b>Ta position GPS</b>, pour t'afficher sur la carte et calculer les temps de trajet (isochrones). La position n'est jamais envoyée à un serveur.</li>
+  <li><b>Le micro</b>, uniquement quand tu enregistres une observation vocale. L'enregistrement est transcrit localement (ou via un service d'API si tu actives cette option dans les Réglages) puis stocké sur ton téléphone.</li>
+  <li><b>Le stockage local</b>, pour mémoriser tes observations, tes préférences, tes sorties favorites et les tuiles topo téléchargées pour usage hors-ligne.</li>
+</ul>
+
+<h2>Ce que l'app envoie à des serveurs</h2>
+<p>Pour fonctionner, WhiteSilence appelle des serveurs publics :</p>
+<ul>
+  <li>Serveurs de cartographie (OpenStreetMap, OpenTopoMap) pour télécharger les tuiles de carte que tu visualises.</li>
+  <li>Serveur Météo France / Open-Meteo pour récupérer les conditions et le BERA du jour.</li>
+  <li>Backend WhiteSilence (<code>snow-conditions.onrender.com</code> et <code>ski-touring-api.onrender.com</code>) pour les modules Conditions et Idées de sortie. Ces backends reçoivent uniquement les coordonnées de la zone que tu consultes — pas d'identifiant.</li>
+</ul>
+<p>Ces requêtes peuvent apparaître dans les logs techniques des serveurs concernés (adresse IP, horodatage), comme pour n'importe quel site web. WhiteSilence ne joint pas d'identifiant à ces requêtes : impossible de les corréler à un utilisateur particulier.</p>
+
+<h2>Ce que l'app NE fait PAS</h2>
+<ul>
+  <li>Aucun compte utilisateur, aucune inscription, aucun email.</li>
+  <li>Aucune analytique (pas de Firebase, pas de Google Analytics, pas de Sentry, pas de Mixpanel, rien).</li>
+  <li>Aucune publicité, aucun partenaire commercial.</li>
+  <li>Aucun partage de tes positions ou de tes observations sans action explicite de ta part.</li>
+  <li>Aucun classement, aucun leaderboard, aucune comparaison avec d'autres utilisateurs.</li>
+</ul>
+
+<h2>Données partagées explicitement</h2>
+<p>Si tu actives la fonction "partager une observation" depuis le module Neige, ton observation (texte transcrit, position, horodatage) sera envoyée à la base communautaire Supabase. C'est anonyme — pas d'identifiant utilisateur — mais ces observations sont publiquement consultables. Tu peux désactiver cette fonction à tout moment dans les Réglages.</p>
+
+<h2>Tes droits</h2>
+<p>Vu qu'aucune donnée personnelle ne quitte ton téléphone, il n'y a pas grand-chose à demander à WhiteSilence en termes de droits RGPD. Pour effacer toutes tes données, il suffit de désinstaller l'app — rien ne restera derrière.</p>
+
+<h2>Open source</h2>
+<p>Le code de WhiteSilence est public sous licence MIT. Tu peux vérifier toutes ces affirmations en lisant le code sur <a href="https://github.com/Tinevagio/whitesilence">GitHub</a>.</p>
+
+<h2>Contact</h2>
+<p>Pour toute question : ouvre une issue sur <a href="https://github.com/Tinevagio/whitesilence/issues">le repo GitHub de WhiteSilence</a>.</p>
+
+<footer>
+  Dernière mise à jour : 18 mai 2026<br>
+  WhiteSilence est édité par Tinevagio, développeur indépendant.<br>
+  <a href="https://github.com/Tinevagio/whitesilence">github.com/Tinevagio/whitesilence</a>
+</footer>
+
+</body>
+</html>

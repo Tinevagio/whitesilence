@@ -1,0 +1,65 @@
+# ─── Flutter / Dart ─────────────────────────────────────────────────────────
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+.packages
+.pub-cache/
+.pub/
+build/
+flutter_*.log
+
+# Si tu utilises FVM (Flutter Version Manager)
+.fvm/
+
+# Coverage tests
+coverage/
+test/.test_coverage.dart
+
+# ─── IDE ────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# ─── Android ────────────────────────────────────────────────────────────────
+android/.gradle/
+android/captures/
+android/local.properties
+android/app/release/
+android/app/debug/
+
+# Signing — CRITIQUE, ne JAMAIS commiter
+android/key.properties
+**/*.keystore
+**/*.jks
+
+# Builds générés
+*.aab
+*.apk
+
+# ─── iOS / macOS ────────────────────────────────────────────────────────────
+ios/Flutter/Generated.xcconfig
+ios/Flutter/Flutter.podspec
+ios/Flutter/ephemeral
+ios/Runner/GeneratedPluginRegistrant.*
+ios/Pods/
+**/Pods/
+
+# ─── OS / divers ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Secrets — JAMAIS commiter ces fichiers ─────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─── Cartes hors-ligne et données utilisateur (générées au runtime) ─────────
+**/hgt/
+**/mbtiles/
+**/tiles/
+**/.cache/
+**/whitesilence.db*
