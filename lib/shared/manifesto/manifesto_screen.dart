@@ -36,6 +36,49 @@ class ManifestoScreen extends StatelessWidget {
             ),
             const SizedBox(height: WSSpacing.xxl),
 
+            // ─── Intro perso ────────────────────────────────────────────
+            Text('Pourquoi WhiteSilence', style: WSText.heading),
+            const SizedBox(height: WSSpacing.md),
+            Text(
+              'Je skie en montagne depuis longtemps. Suffisamment pour savoir '
+              'que ce qu\'on y vient chercher, c\'est le silence. La déconnexion. '
+              'L\'air dans les poumons et la neige sous les peaux, rien d\'autre.',
+              style: WSText.body.copyWith(height: 1.6),
+            ),
+            const SizedBox(height: WSSpacing.md),
+            Text(
+              'Pourtant, ces dernières années, tout s\'est mis à faire du bruit '
+              'autour de nos sorties. Les apps nous demandent de créer des comptes, '
+              'de partager nos traces, de comparer nos temps. Elles transforment '
+              'des moments d\'engagement personnel en données. Des contemplations '
+              'en performances.',
+              style: WSText.body.copyWith(height: 1.6),
+            ),
+            const SizedBox(height: WSSpacing.md),
+            Text(
+              'WhiteSilence est l\'app que je voulais utiliser, et que je ne '
+              'trouvais pas. Pas de compte, pas de classement, pas de partage '
+              'forcé. Juste les outils dont un skieur autonome a vraiment besoin '
+              'sur le terrain : les conditions du jour, le BERA, les temps de '
+              'course, la carte qui marche hors-ligne, et de quoi noter ses '
+              'observations à la voix sans sortir les mains des moufles.',
+              style: WSText.body.copyWith(height: 1.6),
+            ),
+            const SizedBox(height: WSSpacing.md),
+            Text(
+              'Si tu cherches la même chose, elle est pour toi.',
+              style: WSText.body.copyWith(
+                height: 1.6,
+                fontStyle: FontStyle.italic,
+                color: WSColors.slateDark,
+              ),
+            ),
+            const SizedBox(height: WSSpacing.xxl),
+
+            // ─── Les 6 principes ────────────────────────────────────────
+            Text('Les principes', style: WSText.heading),
+            const SizedBox(height: WSSpacing.lg),
+
             _principle(
               icon: Icons.no_accounts_outlined,
               title: 'Pas d\'inscription',
