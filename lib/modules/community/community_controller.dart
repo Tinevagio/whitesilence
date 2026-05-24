@@ -16,6 +16,7 @@ import 'package:flutter/foundation.dart';
 
 import '../snow/models/observation.dart';
 import '../snow/services/supabase_service.dart';
+import '../snow/snow_controller.dart';
 
 enum CommunityStatus {
   idle,
@@ -75,9 +76,27 @@ class CommunityController extends ChangeNotifier {
   }
 
   /// Obs visibles après application des filtres.
+  ///
+  /// IMPORTANT — Déduplication "mes obs vs communauté" :
+  /// Comme WhiteSilence ne gère pas de comptes utilisateur (philo : pas de
+  /// tracking), Supabase ne sait pas distinguer mes obs des autres. Du coup,
+  /// `_all` contient AUSSI mes propres obs qui ont été uploadées.
+  /// On les filtre ici en regardant les ids présents dans SnowController :
+  /// si l'id existe localement, c'est mon obs → exclue de la vue communauté.
+  /// Le coût est minime (Set membership en O(1)).
+  ///
+  /// Prérequis : `SnowController().refreshObservations()` doit utiliser
+  /// `loadAll()` (pas `loadSession()`) sinon les obs >24h ne sont pas dans
+  /// `mineIds` et apparaîtront en double dans la vue communauté.
   List<Observation> get filtered {
-    if (_selectedTypes.isEmpty) return _all;
-    return _all.where((o) {
+    final mineIds = SnowController()
+        .observations
+        .map((o) => o.id)
+        .toSet();
+    final notMine = _all.where((o) => !mineIds.contains(o.id));
+
+    if (_selectedTypes.isEmpty) return notMine.toList();
+    return notMine.where((o) {
       final t = o.snowType;
       return t != null && _selectedTypes.contains(t);
     }).toList();

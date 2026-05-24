@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/colors.dart';
+import '../../core/theme/snow_palette.dart';
 import '../../core/theme/spacing.dart';
 import '../../core/theme/typography.dart';
 import '../snow/models/observation.dart';
@@ -111,7 +112,7 @@ class CommunityFilterSheet extends StatelessWidget {
                   for (final t in _availableTypes)
                     _TypeChip(
                       label: t,
-                      color: WSColors.snowTypeColor(t),
+                      color: SnowPalette.colorForUserType(t),
                       selected: controller.isTypeSelected(t),
                       onTap: () => controller.toggleType(t),
                     ),

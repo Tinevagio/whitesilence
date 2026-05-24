@@ -40,37 +40,67 @@ class ManifestoScreen extends StatelessWidget {
             Text('Pourquoi WhiteSilence', style: WSText.heading),
             const SizedBox(height: WSSpacing.md),
             Text(
-              'Je skie en montagne depuis longtemps. Suffisamment pour savoir '
-              'que ce qu\'on y vient chercher, c\'est le silence. La déconnexion. '
-              'L\'air dans les poumons et la neige sous les peaux, rien d\'autre.',
+              'Je skie en montagne depuis toujours, et avec les années, '
+              'j\'ai compris que nous y cherchons des expériences brutes '
+              'qu\'on ne trouve nulle part ailleurs. Cette sensation '
+              'incroyable de voler au-dessus de trente centimètres de '
+              'poudreuse légère, ou de savourer la souplesse parfaite '
+              'd\'une belle neige de printemps. On oublie le bruit d\'en '
+              'bas. On respire.',
               style: WSText.body.copyWith(height: 1.6),
             ),
             const SizedBox(height: WSSpacing.md),
             Text(
-              'Pourtant, ces dernières années, tout s\'est mis à faire du bruit '
-              'autour de nos sorties. Les apps nous demandent de créer des comptes, '
-              'de partager nos traces, de comparer nos temps. Elles transforment '
-              'des moments d\'engagement personnel en données. Des contemplations '
-              'en performances.',
+              'Pourtant, l\'instant d\'après, la montagne nous rappelle '
+              'sa gravité. C\'est la chaleur étouffante d\'une pente sud '
+              'en mai, quand la neige décolle sous le soleil. Puis, dès '
+              'qu\'on bascule dans l\'ombre, le froid glacial d\'un '
+              'couloir nord qui te saisit l\'échine. Dans ces '
+              'moments-là, on est seul avec ses doutes. Avec la peur '
+              'sourde de se faire coffrer, le cœur qui s\'accélère avant '
+              'un virage engagé au-dessus du vide, là où on sait que '
+              'l\'erreur ne pardonne pas.',
               style: WSText.body.copyWith(height: 1.6),
             ),
             const SizedBox(height: WSSpacing.md),
             Text(
-              'WhiteSilence est l\'app que je voulais utiliser, et que je ne '
-              'trouvais pas. Pas de compte, pas de classement, pas de partage '
-              'forcé. Juste les outils dont un skieur autonome a vraiment besoin '
-              'sur le terrain : les conditions du jour, le BERA, les temps de '
-              'course, la carte qui marche hors-ligne, et de quoi noter ses '
-              'observations à la voix sans sortir les mains des moufles.',
+              'J\'ai créé WhiteSilence pour apaiser cette part d\'ombre. '
+              'Je voulais un compagnon discret qui prenne l\'inquiétude '
+              'à sa charge pour libérer l\'esprit. L\'application est là '
+              'pour t\'aider à lire l\'évolution du manteau neigeux au '
+              'fil des heures, à visualiser les risques d\'avalanche '
+              'directement sur la carte, et à simuler simplement tes '
+              'temps de parcours. Elle met à ta portée les '
+              'observations les plus récentes et les plus précises, pile '
+              'sur ton point GPS.',
               style: WSText.body.copyWith(height: 1.6),
             ),
             const SizedBox(height: WSSpacing.md),
             Text(
-              'Si tu cherches la même chose, elle est pour toi.',
+              'Une fois l\'esprit serein, le miracle de la glisse revient.',
+              style: WSText.body.copyWith(height: 1.6),
+            ),
+            const SizedBox(height: WSSpacing.md),
+            Text(
+              'Si tu cherches toi aussi cette clarté, et le plaisir '
+              'd\'une courbe tracée dans le silence… cette application '
+              'est pour toi.',
+              style: WSText.body.copyWith(height: 1.6),
+            ),
+            const SizedBox(height: WSSpacing.md),
+            Text(
+              'Pas de compte, pas d\'e-mail, pas de compétition. '
+              'Aucune trace de ton passage.',
+              style: WSText.body.copyWith(height: 1.6),
+            ),
+            const SizedBox(height: WSSpacing.md),
+            Text(
+              'Libre, enfin.',
               style: WSText.body.copyWith(
                 height: 1.6,
                 fontStyle: FontStyle.italic,
                 color: WSColors.slateDark,
+                fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: WSSpacing.xxl),
@@ -103,13 +133,6 @@ class ManifestoScreen extends StatelessWidget {
               title: 'Pas de leaderboard',
               body: 'Pas de classement, pas de score, pas de comparaison. '
                   'Tu n\'es pas en compétition avec qui que ce soit.',
-            ),
-            _principle(
-              icon: Icons.wifi_off_outlined,
-              title: 'Offline-first',
-              body: 'En montagne, le réseau n\'est jamais garanti. '
-                  'WhiteSilence fonctionne sans connexion : '
-                  'cartes, calculs, observations, tout en local.',
             ),
             _principle(
               icon: Icons.code,

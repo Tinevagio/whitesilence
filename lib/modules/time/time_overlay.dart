@@ -446,8 +446,9 @@ class _CalibrationSummary extends StatelessWidget {
 
     // En phase "pas encore calibré", on montre les segments accumulés pour
     // que l'utilisateur voie que ça progresse.
+    // hSpeed et aRate contiennent déjà leurs unités (cf. gps_calibrator.report).
     final mainText = isCalibrated
-        ? '$hSpeed km/h · $aRate m/h'
+        ? '$hSpeed · $aRate'
         : segments.isNotEmpty && segments != '0 acceptés, 0 rejetés'
             ? segments
             : 'Calibration en attente (marche pour démarrer)';
@@ -576,13 +577,15 @@ class _CalibrationSheet extends StatelessWidget {
           ),
           const SizedBox(height: WSSpacing.lg),
 
-          // Stats principales
+          // Stats principales.
+          // Les valeurs viennent du report avec leurs unités déjà incluses
+          // (cf. gps_calibrator.report).
           _StatRow(label: 'Vitesse horizontale',
-                   value: '${report['hSpeed'] ?? "?"} km/h'),
+                   value: report['hSpeed'] ?? '?'),
           _StatRow(label: 'Dénivelé positif',
-                   value: '${report['ascentRate'] ?? "?"} m/h'),
+                   value: report['ascentRate'] ?? '?'),
           _StatRow(label: 'Dénivelé négatif',
-                   value: '${report['descentRate'] ?? "?"} m/h'),
+                   value: report['descentRate'] ?? '?'),
 
           const SizedBox(height: WSSpacing.md),
 

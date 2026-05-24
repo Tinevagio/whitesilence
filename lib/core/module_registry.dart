@@ -5,10 +5,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Identifiant unique d'un module WhiteSilence.
 enum ModuleId {
   time,       // ex-GhostTime (Munter + isochrones)
-  snow,       // ex-Hey Snowy (observations vocales) — MODE ÉCRITURE
+  snow,       // Observations nivologiques (vocales ou rapides) — mes obs + communauté
   conditions, // ex-Névé (conditions + BERA + avalanche, en WebView)
   ideas,      // ex-Ski-touring-live (recommandations d'itinéraires, WebView Streamlit)
-  community,  // Obs partagées des autres skieurs (lecture seule depuis Supabase)
+  community,  // ⚠️ Déprécié : fusionné dans `snow` depuis la v0.5. Conservé pour
+              // compat ascendante (SharedPreferences existantes). Ne plus utiliser.
 }
 
 /// Métadonnées d'un module : nom affiché, icône, état actif/inactif.
@@ -45,27 +46,24 @@ class ModuleRegistry extends ChangeNotifier {
     ),
     ModuleInfo(
       id: ModuleId.snow,
-      label: 'Neige',
+      label: 'Obs',
       icon: Icons.ac_unit_outlined,
-      description: 'Observations vocales des conditions nivologiques.',
+      description:
+          'Observations nivologiques : tes obs et celles de la communauté.',
     ),
     ModuleInfo(
       id: ModuleId.conditions,
       label: 'Conditions',
       icon: Icons.cloud_outlined,
-      description: 'Conditions de neige + BERA + zones d\'avalanche (vue web Névé).',
+      description:
+          'Conditions de neige + BERA + zones d\'avalanche (vue web Névé).',
     ),
     ModuleInfo(
       id: ModuleId.ideas,
       label: 'Idées',
       icon: Icons.lightbulb_outline,
-      description: 'Suggestions d\'itinéraires selon les conditions et ton niveau.',
-    ),
-    ModuleInfo(
-      id: ModuleId.community,
-      label: 'Obs',
-      icon: Icons.people_outline,
-      description: 'Observations partagées par la communauté (lecture seule).',
+      description:
+          'Suggestions d\'itinéraires selon les conditions et ton niveau.',
     ),
   ];
 

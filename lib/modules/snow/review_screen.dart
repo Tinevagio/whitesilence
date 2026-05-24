@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/colors.dart';
+import '../../core/theme/snow_palette.dart';
 import '../../core/theme/spacing.dart';
 import '../../core/theme/typography.dart';
 import 'edit_observation_screen.dart';
@@ -178,7 +179,7 @@ class _ObservationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = WSColors.snowTypeColor(obs.snowType);
+    final color = SnowPalette.colorForUserType(obs.snowType);
     final timeStr = '${obs.timestamp.hour.toString().padLeft(2, "0")}:'
         '${obs.timestamp.minute.toString().padLeft(2, "0")}';
 

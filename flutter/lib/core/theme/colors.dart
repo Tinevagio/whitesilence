@@ -65,7 +65,22 @@ class WSColors {
   static const Color sunOrange     = Color(0xFFBA7517); // moquette, soleil, warning soft
   static const Color sunOrangeBg   = Color(0xFFFAEEDA);
 
-  // NOTE : les couleurs des types de neige sont désormais dans
-  // `snow_palette.dart`. Importer SnowPalette.colorForUserType(...) ou
-  // SnowPalette.colorForConditionCode(...) selon le besoin.
+  // Couleurs des types de neige (alignées avec le module snow / Hey Snowy)
+  // Le marqueur sur la carte prend cette couleur.
+  static const Map<String, Color> snowTypeColors = {
+    'poudre':   Color(0xFF1D9E75), // vert tendre — la bonne neige fraîche
+    'moquette': Color(0xFF4CAF50), // vert printemps — moquette/transfo
+    'transfo':  Color(0xFF4CAF50),
+    'béton':    Color(0xFFF5A623), // ambre — neige dure/croûtée
+    'croûte':   Color(0xFFF5A623),
+    'ventée':   Color(0xFFE24B4A), // rouge vif — alerte plaque
+    'lourde':   Color(0xFFFF8A65), // orange chaud
+    'humide':   Color(0xFF378ADD), // bleu eau
+    'purge':    Color(0xFF888780), // gris pierre
+    'autre':    Color(0xFFB4B2A9), // gris neutre
+  };
+
+  /// Couleur pour un type de neige, avec fallback "autre" si non reconnu.
+  static Color snowTypeColor(String? type) =>
+      snowTypeColors[type] ?? snowTypeColors['autre']!;
 }

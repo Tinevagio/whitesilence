@@ -189,8 +189,13 @@ class SnowController extends ChangeNotifier {
   }
 
   /// Recharge les observations depuis la BDD locale.
+  ///
+  /// Depuis la fusion des modules Neige et Obs (v0.5), on charge TOUTES les
+  /// obs (`loadAll()`) et plus seulement celles des dernières 24h
+  /// (`loadSession()`). Raison : l'onglet Obs présente l'historique complet
+  /// de l'utilisateur, pas la "session du jour".
   Future<void> refreshObservations() async {
-    _observations = await _dao.loadSession();
+    _observations = await _dao.loadAll();
     notifyListeners();
   }
 

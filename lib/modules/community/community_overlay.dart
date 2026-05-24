@@ -13,6 +13,7 @@ import 'package:latlong2/latlong.dart';
 import '../../core/map/map_module_overlay.dart';
 import '../../core/module_registry.dart';
 import '../../core/theme/colors.dart';
+import '../../core/theme/snow_palette.dart';
 import '../../core/theme/spacing.dart';
 import '../../core/theme/typography.dart';
 import '../snow/models/observation.dart';
@@ -84,7 +85,8 @@ class _CommunityPinsLayer extends StatelessWidget {
 }
 
 /// Pin légèrement différent de celui du module Neige (qui est TES obs).
-/// Plus petit, contour pointillé/léger, pour signifier "obs d'autrui".
+/// Anneau coloré avec flocon coloré (vs disque plein + flocon blanc pour les
+/// tiennes), pour signifier "obs d'autrui".
 class _CommunityPin extends StatelessWidget {
   final Observation obs;
   final VoidCallback onTap;
@@ -92,7 +94,7 @@ class _CommunityPin extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = WSColors.snowTypeColor(obs.snowType);
+    final color = SnowPalette.colorForUserType(obs.snowType);
     return GestureDetector(
       onTap: onTap,
       child: Stack(
@@ -100,19 +102,25 @@ class _CommunityPin extends StatelessWidget {
         children: [
           // Halo
           Container(
-            width: 28, height: 28,
+            width: 32, height: 32,
             decoration: BoxDecoration(
               color: color.withOpacity(0.15),
               shape: BoxShape.circle,
             ),
           ),
-          // Cœur du pin (anneau, pas plein, pour distinguer de TES obs)
+          // Cœur du pin : fond blanc, anneau coloré, flocon coloré au centre.
+          // Distinction visuelle nette vs marker Snow personnel.
           Container(
-            width: 14, height: 14,
+            width: 20, height: 20,
             decoration: BoxDecoration(
               color: WSColors.snowWhite,
               shape: BoxShape.circle,
               border: Border.all(color: color, width: 2.5),
+            ),
+            child: Icon(
+              Icons.ac_unit,
+              size: 11,
+              color: color,
             ),
           ),
         ],
@@ -129,7 +137,7 @@ class _CommunityDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = WSColors.snowTypeColor(obs.snowType);
+    final color = SnowPalette.colorForUserType(obs.snowType);
     final dt = obs.timestamp;
     final dateStr = '${dt.day.toString().padLeft(2, "0")}/'
         '${dt.month.toString().padLeft(2, "0")} '

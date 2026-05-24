@@ -14,15 +14,103 @@ import 'package:latlong2/latlong.dart';
 import '../../core/map/map_module_overlay.dart';
 import '../../core/module_registry.dart';
 import '../../core/theme/colors.dart';
+import '../../core/theme/snow_palette.dart';
 import '../../core/theme/spacing.dart';
 import '../../core/theme/typography.dart';
+import '../community/community_controller.dart';
 import 'edit_observation_screen.dart';
 import 'models/observation.dart';
+import 'quick_observation_sheet.dart';
 import 'review_screen.dart';
 import 'snow_controller.dart';
 
+/// Filtre d'affichage : quelles obs montrer sur la carte.
+enum ObsViewFilter { mine, community, all }
+
+/// État partagé du module Obs : filtre source + filtre temporel + filtre types.
+///
+/// Singleton, persiste entre rebuilds. Le filtre temporel s'applique aux deux
+/// sources (mes obs ET communauté). Le filtre types également.
+class _ObsViewState extends ChangeNotifier {
+  static final _ObsViewState _instance = _ObsViewState._();
+  factory _ObsViewState() => _instance;
+  _ObsViewState._();
+
+  // ── Source ──────────────────────────────────────────────────────────────
+  ObsViewFilter _filter = ObsViewFilter.all;
+  ObsViewFilter get filter => _filter;
+  set filter(ObsViewFilter f) {
+    if (f == _filter) return;
+    _filter = f;
+    notifyListeners();
+  }
+
+  // ── Fenêtre temporelle (jours) ──────────────────────────────────────────
+  /// Nombre de jours en arrière à afficher. 1 = J, 7 = J-7, etc.
+  /// 0 (cas spécial) = "Toutes" (pas de filtre temporel).
+  int _windowDays = 7;
+  int get windowDays => _windowDays;
+  void setWindowDays(int days) {
+    final clamped = days.clamp(0, 90);
+    if (clamped == _windowDays) return;
+    _windowDays = clamped;
+    notifyListeners();
+
+    // Propager au CommunityController pour qu'il re-fetche les obs Supabase
+    // sur cette nouvelle fenêtre. "0" (Tout) → 90 jours côté serveur (max).
+    final commWindow = clamped == 0 ? 90 : clamped;
+    CommunityController().setWindowDays(commWindow);
+  }
+
+  /// Date limite en deçà de laquelle les obs sont masquées.
+  /// Null si pas de filtre (windowDays == 0).
+  DateTime? get sinceCutoff {
+    if (_windowDays == 0) return null;
+    return DateTime.now().subtract(Duration(days: _windowDays));
+  }
+
+  // ── Types de neige sélectionnés ─────────────────────────────────────────
+  final Set<String> _selectedTypes = {};
+  Set<String> get selectedTypes => Set.unmodifiable(_selectedTypes);
+
+  bool isTypeSelected(String type) => _selectedTypes.contains(type);
+
+  void toggleType(String type) {
+    if (_selectedTypes.contains(type)) {
+      _selectedTypes.remove(type);
+    } else {
+      _selectedTypes.add(type);
+    }
+    notifyListeners();
+  }
+
+  void clearTypeFilter() {
+    if (_selectedTypes.isEmpty) return;
+    _selectedTypes.clear();
+    notifyListeners();
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  /// Applique tous les filtres (temporel + types) à une liste d'obs.
+  List<Observation> apply(List<Observation> source) {
+    final cutoff = sinceCutoff;
+    final types = _selectedTypes;
+    return source.where((o) {
+      if (cutoff != null && o.timestamp.isBefore(cutoff)) return false;
+      if (types.isNotEmpty &&
+          (o.snowType == null || !types.contains(o.snowType))) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+}
+
 class SnowModuleOverlay extends MapModuleOverlay {
-  final SnowController controller = SnowController();
+  final SnowController       controller          = SnowController();
+  final CommunityController  communityController = CommunityController();
+  final _ObsViewState        viewState           = _ObsViewState();
 
   @override
   ModuleId get id => ModuleId.snow;
@@ -30,13 +118,21 @@ class SnowModuleOverlay extends MapModuleOverlay {
   @override
   List<Widget> buildMapLayers(BuildContext context) {
     return [
-      _ObservationsLayer(controller: controller),
+      _ObservationsLayer(
+        controller: controller,
+        communityController: communityController,
+        viewState: viewState,
+      ),
     ];
   }
 
   @override
   Widget? buildActionPanel(BuildContext context) {
-    return _SnowActionPanel(controller: controller);
+    return _SnowActionPanel(
+      controller: controller,
+      communityController: communityController,
+      viewState: viewState,
+    );
   }
 }
 
@@ -44,19 +140,53 @@ class SnowModuleOverlay extends MapModuleOverlay {
 
 class _ObservationsLayer extends StatelessWidget {
   final SnowController controller;
-  const _ObservationsLayer({required this.controller});
+  final CommunityController communityController;
+  final _ObsViewState viewState;
+
+  const _ObservationsLayer({
+    required this.controller,
+    required this.communityController,
+    required this.viewState,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: controller,
+    return AnimatedBuilder(
+      animation: Listenable.merge(
+          [controller, communityController, viewState]),
       builder: (context, _) {
-        final obs = controller.observations;
-        if (obs.isEmpty) return const SizedBox.shrink();
+        final filter = viewState.filter;
+        final showMine = filter != ObsViewFilter.community;
+        final showCommunity = filter != ObsViewFilter.mine;
+
+        // Source brute selon le toggle Mes/Comm/Toutes
+        final mineRaw = showMine ? controller.observations : <Observation>[];
+        final commRaw = showCommunity
+            ? communityController.filtered // déjà dédoublonné côté community
+            : <Observation>[];
+
+        // Application des filtres temporel + types (state partagé)
+        final mine = viewState.apply(mineRaw);
+        final comm = viewState.apply(commRaw);
+
+        if (mine.isEmpty && comm.isEmpty) return const SizedBox.shrink();
 
         return MarkerLayer(
           markers: [
-            for (final o in obs)
+            // Obs de la communauté en dessous (anneaux discrets)
+            for (final o in comm)
+              Marker(
+                point: o.latLng,
+                width: 44,
+                height: 44,
+                alignment: Alignment.center,
+                child: _CommunityMarker(
+                  obs: o,
+                  onTap: () => _openCommunityDetail(context, o),
+                ),
+              ),
+            // Mes obs au-dessus (disques pleins)
+            for (final o in mine)
               Marker(
                 point: o.latLng,
                 width: 44,
@@ -70,6 +200,16 @@ class _ObservationsLayer extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  void _openCommunityDetail(BuildContext context, Observation obs) {
+    // Réutilise la même bottom sheet que mes obs, mais sans bouton Édition.
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _ObservationDetailSheet(obs: obs, readOnly: true),
     );
   }
 
@@ -92,25 +232,30 @@ class _ObservationMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = WSColors.snowTypeColor(obs.snowType);
+    final color = SnowPalette.colorForUserType(obs.snowType);
     final isPending = !obs.isEnriched; // pas encore passé par l'IA
 
+    // Marqueur en forme de flocon — clin d'œil à Hey Snowy.
+    // Disque plein coloré avec un flocon blanc centré pour TES obs (= "à moi"),
+    // contre un anneau coloré avec flocon coloré pour les obs Community.
     return GestureDetector(
       onTap: onTap,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          // Halo discret
+          // Halo discret pour qu'on repère le pin dans le décor topo
           Container(
-            width: 32, height: 32,
+            width: 36, height: 36,
             decoration: BoxDecoration(
               color: color.withOpacity(0.18),
               shape: BoxShape.circle,
             ),
           ),
-          // Cœur du pin
+          // Cœur du pin : disque plein coloré, bord blanc.
+          // Si l'IA n'a pas encore traité l'observation, on affiche un disque
+          // blanc avec bord gris + flocon gris (pour signaler "en cours").
           Container(
-            width: 16, height: 16,
+            width: 22, height: 22,
             decoration: BoxDecoration(
               color: isPending ? WSColors.snowWhite : color,
               shape: BoxShape.circle,
@@ -119,17 +264,50 @@ class _ObservationMarker extends StatelessWidget {
                 width: 2,
               ),
             ),
-            child: isPending
-                ? Center(
-                    child: Container(
-                      width: 4, height: 4,
-                      decoration: const BoxDecoration(
-                        color: WSColors.stoneGray,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  )
-                : null,
+            child: Icon(
+              Icons.ac_unit,
+              size: 13,
+              color: isPending ? WSColors.stoneGray : WSColors.snowWhite,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pin pour une obs **communauté**.
+/// Anneau coloré (fond blanc + bord coloré) avec flocon coloré au centre.
+/// Visuellement distinct du _ObservationMarker (disque plein) pour qu'on
+/// reconnaisse au premier coup d'œil que ce n'est pas une obs perso.
+class _CommunityMarker extends StatelessWidget {
+  final Observation obs;
+  final VoidCallback onTap;
+  const _CommunityMarker({required this.obs, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = SnowPalette.colorForUserType(obs.snowType);
+    return GestureDetector(
+      onTap: onTap,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: 32, height: 32,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+          ),
+          Container(
+            width: 20, height: 20,
+            decoration: BoxDecoration(
+              color: WSColors.snowWhite,
+              shape: BoxShape.circle,
+              border: Border.all(color: color, width: 2.5),
+            ),
+            child: Icon(Icons.ac_unit, size: 11, color: color),
           ),
         ],
       ),
@@ -141,16 +319,20 @@ class _ObservationMarker extends StatelessWidget {
 
 class _ObservationDetailSheet extends StatelessWidget {
   final Observation obs;
-  final SnowController controller;
+  /// Controller pour les actions (édition, suppression).
+  /// Null = mode lecture seule (cas obs communauté).
+  final SnowController? controller;
+  final bool readOnly;
 
   const _ObservationDetailSheet({
     required this.obs,
-    required this.controller,
+    this.controller,
+    this.readOnly = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final color = WSColors.snowTypeColor(obs.snowType);
+    final color = SnowPalette.colorForUserType(obs.snowType);
     final timeStr = '${obs.timestamp.day.toString().padLeft(2, "0")}/'
         '${obs.timestamp.month.toString().padLeft(2, "0")} '
         '${obs.timestamp.hour.toString().padLeft(2, "0")}:'
@@ -209,26 +391,28 @@ class _ObservationDetailSheet extends StatelessWidget {
                   ],
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.edit_outlined, size: 20),
-                tooltip: 'Modifier',
-                onPressed: () async {
-                  Navigator.pop(context); // ferme le bottom sheet
-                  await Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => EditObservationScreen(observation: obs),
-                    ),
-                  );
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 20),
-                tooltip: 'Supprimer',
-                onPressed: () async {
-                  await controller.deleteObservation(obs);
-                  if (context.mounted) Navigator.pop(context);
-                },
-              ),
+              if (!readOnly) ...[
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  tooltip: 'Modifier',
+                  onPressed: () async {
+                    Navigator.pop(context); // ferme le bottom sheet
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => EditObservationScreen(observation: obs),
+                      ),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  tooltip: 'Supprimer',
+                  onPressed: () async {
+                    await controller?.deleteObservation(obs);
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                ),
+              ],
             ],
           ),
 
@@ -306,20 +490,28 @@ class _Chip extends StatelessWidget {
 
 class _SnowActionPanel extends StatelessWidget {
   final SnowController controller;
-  const _SnowActionPanel({required this.controller});
+  final CommunityController communityController;
+  final _ObsViewState viewState;
+
+  const _SnowActionPanel({
+    required this.controller,
+    required this.communityController,
+    required this.viewState,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: controller,
+    return AnimatedBuilder(
+      animation: Listenable.merge(
+          [controller, communityController, viewState]),
       builder: (context, _) {
-        // start() est idempotent (cf. flag _started dans SnowController),
-        // donc on peut l'appeler à chaque rebuild sans risque
+        // start() est idempotent → safe à chaque rebuild
         controller.start();
+        communityController.start();
 
         return Container(
           padding: const EdgeInsets.fromLTRB(
-            WSSpacing.lg, WSSpacing.md, WSSpacing.md, WSSpacing.md),
+              WSSpacing.lg, WSSpacing.md, WSSpacing.md, WSSpacing.md),
           decoration: BoxDecoration(
             color: WSColors.snowWhite.withOpacity(0.96),
             borderRadius: BorderRadius.circular(WSRadius.lg),
@@ -329,13 +521,34 @@ class _SnowActionPanel extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ─── Chip filtres (fenêtre temporelle + types) ──────────────
+              _FilterChip(viewState: viewState),
+              const SizedBox(height: WSSpacing.sm),
+
+              // ─── Toggle : Mes / Communauté / Toutes ─────────────────────
+              // Les compteurs reflètent l'effet des filtres en cours pour
+              // que l'utilisateur voie immédiatement combien d'obs passent.
+              _ViewToggle(
+                state: viewState,
+                mineCount: viewState.apply(controller.observations).length,
+                commCount: viewState.apply(communityController.filtered).length,
+              ),
+              const SizedBox(height: WSSpacing.sm),
+
               _StatusLine(controller: controller),
               const SizedBox(height: WSSpacing.sm),
               _HandsFreeToggle(controller: controller),
               const SizedBox(height: WSSpacing.sm),
+
+              // ─── Deux boutons : Saisie rapide + Vocale ──────────────────
               Row(
                 children: [
                   Expanded(
+                    child: _QuickButton(),
+                  ),
+                  const SizedBox(width: WSSpacing.sm),
+                  Expanded(
+                    flex: 2,
                     child: _MicButton(controller: controller),
                   ),
                   const SizedBox(width: WSSpacing.sm),
@@ -362,6 +575,362 @@ class _SnowActionPanel extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Toggle 3 segments : Mes obs / Communauté / Toutes (par défaut).
+/// Affiche le nombre d'obs dans chaque segment pour donner un retour.
+class _ViewToggle extends StatelessWidget {
+  final _ObsViewState state;
+  final int mineCount;
+  final int commCount;
+
+  const _ViewToggle({
+    required this.state,
+    required this.mineCount,
+    required this.commCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<ObsViewFilter>(
+      segments: [
+        ButtonSegment(
+          value: ObsViewFilter.mine,
+          label: Text('Mes ($mineCount)'),
+          icon: const Icon(Icons.person_outline, size: 16),
+        ),
+        ButtonSegment(
+          value: ObsViewFilter.community,
+          label: Text('Comm. ($commCount)'),
+          icon: const Icon(Icons.people_outline, size: 16),
+        ),
+        const ButtonSegment(
+          value: ObsViewFilter.all,
+          label: Text('Toutes'),
+          icon: Icon(Icons.layers_outlined, size: 16),
+        ),
+      ],
+      selected: {state.filter},
+      onSelectionChanged: (s) => state.filter = s.first,
+      style: SegmentedButton.styleFrom(
+        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        visualDensity: VisualDensity.compact,
+      ),
+      showSelectedIcon: false,
+    );
+  }
+}
+
+/// Bouton "Saisie rapide" : ouvre le bottom sheet pour créer une obs au point
+/// GPS actuel sans audio. Plus petit que le bouton micro principal.
+class _QuickButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: () => QuickObservationSheet.show(context),
+      icon: const Icon(Icons.add_location_alt_outlined, size: 20),
+      label: const Text('Rapide'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: WSColors.glacierBlue,
+        side: const BorderSide(color: WSColors.glacierBlue, width: 1.0),
+        minimumSize: const Size(0, WSTouch.bigAction - 8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: WSSpacing.sm,
+          vertical: WSSpacing.md,
+        ),
+        textStyle:
+            const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+/// Chip qui résume les filtres actifs (fenêtre temporelle + types).
+/// Tap → ouvre une bottom sheet pour modifier les filtres.
+///
+/// Affichage : "J-7 · Tous types" ou "J-3 · 4 types" ou "Tout · Tous types".
+class _FilterChip extends StatelessWidget {
+  final _ObsViewState viewState;
+  const _FilterChip({required this.viewState});
+
+  @override
+  Widget build(BuildContext context) {
+    final days = viewState.windowDays;
+    final n = viewState.selectedTypes.length;
+
+    final windowLabel = switch (days) {
+      0 => 'Tout',
+      1 => 'J',
+      _ => 'J-$days',
+    };
+    final typesLabel = n == 0 ? 'Tous types' : '$n type${n > 1 ? "s" : ""}';
+
+    final isFiltering = days != 0 || n > 0;
+
+    return InkWell(
+      onTap: () => _ObsFilterSheet.show(context, viewState),
+      borderRadius: BorderRadius.circular(WSRadius.pill),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: WSSpacing.md,
+          vertical: 6,
+        ),
+        decoration: BoxDecoration(
+          color: isFiltering
+              ? WSColors.glacierBlue.withOpacity(0.10)
+              : WSColors.glacierLight,
+          borderRadius: BorderRadius.circular(WSRadius.pill),
+          border: Border.all(
+            color: isFiltering
+                ? WSColors.glacierBlue.withOpacity(0.4)
+                : WSColors.glacierMid,
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.filter_list,
+              size: 14,
+              color: isFiltering ? WSColors.glacierBlue : WSColors.stoneGray,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '$windowLabel  ·  $typesLabel',
+              style: WSText.micro.copyWith(
+                color: isFiltering
+                    ? WSColors.glacierBlue
+                    : WSColors.slateDark,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              Icons.keyboard_arrow_down,
+              size: 14,
+              color: isFiltering ? WSColors.glacierBlue : WSColors.stoneGray,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet de filtres : fenêtre temporelle + multi-select des types.
+class _ObsFilterSheet extends StatelessWidget {
+  final _ObsViewState viewState;
+  const _ObsFilterSheet({required this.viewState});
+
+  static const _windowOptions = <(int, String)>[
+    (1,  'J'),
+    (3,  'J-3'),
+    (7,  'J-7'),
+    (14, 'J-14'),
+    (30, 'J-30'),
+    (0,  'Tout'),
+  ];
+
+  static const _allTypes = <String>[
+    SnowTypes.poudre,
+    SnowTypes.moquette,
+    SnowTypes.transfo,
+    SnowTypes.croute,
+    SnowTypes.beton,
+    SnowTypes.ventee,
+    SnowTypes.humide,
+    SnowTypes.lourde,
+    SnowTypes.purge,
+    SnowTypes.autre,
+  ];
+
+  static Future<void> show(BuildContext context, _ObsViewState state) {
+    return showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _ObsFilterSheet(viewState: state),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: viewState,
+      builder: (context, _) => Container(
+        decoration: const BoxDecoration(
+          color: WSColors.snowWhite,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(WSRadius.lg)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              WSSpacing.lg, WSSpacing.md, WSSpacing.lg, WSSpacing.lg,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40, height: 4,
+                    margin: const EdgeInsets.only(bottom: WSSpacing.md),
+                    decoration: BoxDecoration(
+                      color: WSColors.glacierMid,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+
+                // ─── Fenêtre temporelle ─────────────────────────────────
+                Text(
+                  'Période',
+                  style: WSText.heading.copyWith(fontSize: 16),
+                ),
+                const SizedBox(height: WSSpacing.xs),
+                Text(
+                  'Afficher les observations des derniers jours.',
+                  style: WSText.micro.copyWith(color: WSColors.stoneGray),
+                ),
+                const SizedBox(height: WSSpacing.md),
+                Wrap(
+                  spacing: WSSpacing.sm,
+                  runSpacing: WSSpacing.sm,
+                  children: _windowOptions.map((opt) {
+                    final days = opt.$1;
+                    final label = opt.$2;
+                    final sel = viewState.windowDays == days;
+                    return _SmallChip(
+                      label: label,
+                      selected: sel,
+                      onTap: () => viewState.setWindowDays(days),
+                    );
+                  }).toList(),
+                ),
+
+                const SizedBox(height: WSSpacing.lg),
+                const Divider(color: WSColors.glacierMid, height: 1),
+                const SizedBox(height: WSSpacing.md),
+
+                // ─── Types de neige ─────────────────────────────────────
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Types de neige',
+                      style: WSText.heading.copyWith(fontSize: 16),
+                    ),
+                    if (viewState.selectedTypes.isNotEmpty)
+                      TextButton(
+                        onPressed: viewState.clearTypeFilter,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          'Effacer',
+                          style: WSText.micro.copyWith(
+                            color: WSColors.glacierBlue,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: WSSpacing.xs),
+                Text(
+                  viewState.selectedTypes.isEmpty
+                      ? 'Aucun filtre : tous les types sont affichés.'
+                      : 'Seuls les types cochés seront affichés.',
+                  style: WSText.micro.copyWith(color: WSColors.stoneGray),
+                ),
+                const SizedBox(height: WSSpacing.md),
+                Wrap(
+                  spacing: WSSpacing.sm,
+                  runSpacing: WSSpacing.sm,
+                  children: _allTypes.map((t) {
+                    final color = SnowPalette.colorForUserType(t);
+                    final sel = viewState.isTypeSelected(t);
+                    return _SmallChip(
+                      label: t,
+                      selected: sel,
+                      color: color,
+                      onTap: () => viewState.toggleType(t),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Chip réutilisable pour la sheet (fenêtre + types).
+class _SmallChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color? color;
+  final VoidCallback onTap;
+
+  const _SmallChip({
+    required this.label,
+    required this.selected,
+    this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = color ?? WSColors.glacierBlue;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(WSRadius.lg),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: WSSpacing.md,
+          vertical: 9,
+        ),
+        decoration: BoxDecoration(
+          color: selected ? accent : WSColors.glacierLight,
+          borderRadius: BorderRadius.circular(WSRadius.lg),
+          border: Border.all(
+            color: selected ? accent : WSColors.glacierMid,
+            width: selected ? 1.5 : 0.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (color != null && !selected) ...[
+              Container(
+                width: 9, height: 9,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: WSText.body.copyWith(
+                fontSize: 13,
+                color: selected ? Colors.white : WSColors.slateDark,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -413,7 +982,7 @@ class _MicButton extends StatelessWidget {
         rec ? Icons.stop_circle_outlined : Icons.mic,
         size: 28,
       ),
-      label: Text(rec ? 'Stop' : 'Enregistrer une obs'),
+      label: Text(rec ? 'Stop' : 'Obs vocale'),
     );
   }
 }

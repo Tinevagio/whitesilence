@@ -48,9 +48,15 @@ class _WSShellState extends State<WSShell> {
   }
 
   void _onRegistryChanged() {
+    // Si le module actif vient d'être désactivé → basculer sur un autre.
     if (_active == null || !_registry.isEnabled(_active!)) {
       _pickFirstAvailable();
+      return; // setState déjà fait dans _pickFirstAvailable
     }
+    // Sinon, le module actif reste valide, mais d'autres modules ont pu
+    // être (ré)activés/désactivés → on doit rebuild pour mettre à jour la
+    // bottom bar et la liste des overlays.
+    setState(() {});
   }
 
   /// Réponse à une demande cross-module : un module (typiquement Idées) a

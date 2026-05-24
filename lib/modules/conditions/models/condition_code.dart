@@ -3,11 +3,12 @@
 // Codes de conditions de neige retournés par l'API Névé.
 // Aligné sur `SnowConditionEnum` côté backend (cf. api/main.py).
 //
-// On garde tous les codes même si pour l'instant le README en mentionne 5.
-// La liste serveur en a 8 — on les supporte tous.
+// REFACTOR : les couleurs et labels ne sont plus stockés ici. Ils sont
+// délégués à `SnowPalette` (cf. lib/core/theme/snow_palette.dart) pour
+// que le module Conditions et le module Obs partagent une seule palette.
 
 import 'package:flutter/material.dart';
-import '../../../core/theme/colors.dart';
+import '../../../core/theme/snow_palette.dart';
 
 /// Tous les codes possibles tels que retournés par l'API.
 class SnowConditionCode {
@@ -28,35 +29,22 @@ class SnowConditionCode {
   ];
 }
 
-/// Métadonnées d'affichage : label FR + couleur (palette WhiteSilence).
-/// Si l'API renvoie un code inconnu, le getter [meta] retourne UNDEFINED.
+/// Métadonnées d'affichage : label FR + couleur, dérivés de SnowPalette.
+/// Garde l'API publique précédente (`ConditionMeta.forCode(code)`) pour
+/// minimiser les changements dans les call sites.
 class ConditionMeta {
   final String code;
   final String label;
   final Color color;
   const ConditionMeta._(this.code, this.label, this.color);
 
-  static const _table = <String, ConditionMeta>{
-    SnowConditionCode.powderCold:
-        ConditionMeta._(SnowConditionCode.powderCold,   'Poudre froide',       WSColors.glacierBlue),
-    SnowConditionCode.powderWarm:
-        ConditionMeta._(SnowConditionCode.powderWarm,   'Poudre réchauffée',   WSColors.glacierBlueLight),
-    SnowConditionCode.springSnow:
-        ConditionMeta._(SnowConditionCode.springSnow,   'Neige de printemps',  WSColors.sunOrange),
-    SnowConditionCode.crustMorning:
-        ConditionMeta._(SnowConditionCode.crustMorning, 'Croûte de regel',     WSColors.avalancheRed),
-    SnowConditionCode.wetHeavy:
-        ConditionMeta._(SnowConditionCode.wetHeavy,     'Neige humide lourde', Color(0xFF8B572A)),
-    SnowConditionCode.windAffected:
-        ConditionMeta._(SnowConditionCode.windAffected, 'Neige soufflée',      WSColors.stoneGray),
-    SnowConditionCode.oldPacked:
-        ConditionMeta._(SnowConditionCode.oldPacked,    'Neige ancienne',      Color(0xFFB8D4F0)),
-    SnowConditionCode.undefined:
-        ConditionMeta._(SnowConditionCode.undefined,    'Indéterminé',         WSColors.glacierMid),
-  };
-
+  /// Construit la meta à partir d'un code, en utilisant la palette unifiée.
   static ConditionMeta forCode(String? code) {
-    if (code == null) return _table[SnowConditionCode.undefined]!;
-    return _table[code] ?? _table[SnowConditionCode.undefined]!;
+    final family = SnowPalette.familyFromConditionCode(code);
+    return ConditionMeta._(
+      code ?? SnowConditionCode.undefined,
+      SnowPalette.labelFor(family),
+      SnowPalette.colorFor(family),
+    );
   }
 }

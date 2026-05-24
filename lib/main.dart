@@ -9,7 +9,6 @@ import 'core/module_registry.dart';
 import 'core/onboarding/onboarding_screen.dart';
 import 'core/onboarding/onboarding_service.dart';
 import 'core/theme/theme.dart';
-import 'modules/community/community_overlay.dart';
 import 'modules/conditions/conditions_overlay.dart';
 import 'modules/ideas/ideas_overlay.dart';
 import 'modules/snow/services/supabase_service.dart';
@@ -132,7 +131,6 @@ class _AppEntrypointState extends State<_AppEntrypoint> {
       SnowModuleOverlay(),
       ConditionsModuleOverlay(),
       IdeasModuleOverlay(),
-      CommunityModuleOverlay(),
     ]);
   }
 }

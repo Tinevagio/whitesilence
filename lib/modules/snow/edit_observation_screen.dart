@@ -15,6 +15,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/colors.dart';
+import '../../core/theme/snow_palette.dart';
 import '../../core/theme/spacing.dart';
 import '../../core/theme/typography.dart';
 import 'models/observation.dart';
@@ -245,7 +246,7 @@ class _EditObservationScreenState extends State<EditObservationScreen> {
                   _SelectableChip(
                     label: type,
                     selected: _snowType == type,
-                    color: WSColors.snowTypeColor(type),
+                    color: SnowPalette.colorForUserType(type),
                     onTap: () {
                       setState(() {
                         _snowType = type;

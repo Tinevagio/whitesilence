@@ -11,8 +11,11 @@
 //
 // Remplace la partie "temps/isochrones" de l'ancien app_state.dart de TimeToGo.
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/elevation/dem_selector.dart';
 import '../../core/elevation/elevation_provider.dart';
@@ -22,6 +25,10 @@ import 'gps_calibrator.dart';
 import 'isochrone.dart';
 import 'munter.dart';
 import 'profile_adapter.dart';
+
+/// Clé SharedPreferences pour la persistance de la calibration Munter.
+/// Format JSON : { "profile": "skiTouring/trained/normal", "measurements": [...] }
+const String _kMunterSnapshotKey = 'time.munter.snapshot';
 
 class TimeController extends ChangeNotifier {
   static final TimeController _instance = TimeController._();
@@ -126,10 +133,20 @@ class TimeController extends ChangeNotifier {
     }
     _calibrator = GpsCalibrator(munter: _munter, dem: _cachedDem);
     // Branche les notifications du calibrator pour que l'UI suive en
-    // temps réel (segments acceptés, % calibration, vitesses Munter).
-    _calibrator.onUpdate = notifyListeners;
+    // temps réel + sauver la calibration après chaque update.
+    _calibrator.onUpdate = () {
+      _saveSnapshot(); // fire-and-forget, ne bloque pas l'UI
+      notifyListeners();
+    };
     _calibratorInitialized = true;
     if (_calibratorAttached) _calibrator.attachToGpsService();
+
+    // Tente de restaurer la calibration précédente. Si la signature de
+    // profil ne correspond plus, le snapshot est ignoré (calibration repart
+    // proprement de zéro pour ce nouveau profil).
+    // Fire-and-forget : on n'attend pas le résultat pour libérer le UI.
+    _restoreSnapshot();
+
     if (!_computing) {
       _contours      = {};
       _targetPoint   = null;
@@ -305,5 +322,64 @@ class TimeController extends ChangeNotifier {
     _targetPoint   = null;
     _pointEstimate = null;
     notifyListeners();
+  }
+
+  // ── Persistance Munter ──────────────────────────────────────────────────
+  //
+  // On sauve les N dernières mesures GPS avec la signature du profil. Au
+  // démarrage, on tente de recharger : si la signature matche, la
+  // calibration reprend où elle en était. Si elle ne matche pas (profil
+  // modifié), on ignore le snapshot et la calibration repart de zéro.
+  //
+  // Stratégie debounce : `_saveSnapshot()` est appelé après chaque mesure
+  // GPS, soit potentiellement plusieurs fois par minute en sortie. C'est
+  // OK car SharedPreferences est rapide (~ms) et le payload est petit
+  // (< 1 KB). Pas besoin de debouncing complexe.
+
+  Future<void> _saveSnapshot() async {
+    try {
+      final snapshot = _munter.toSnapshot();
+      // Skip si pas de mesure (rien à sauver, et évite d'écraser un
+      // snapshot précédent valide par un état vide post-redémarrage).
+      final ms = snapshot['measurements'];
+      if (ms is List && ms.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kMunterSnapshotKey, jsonEncode(snapshot));
+    } catch (e) {
+      // Persistance non critique — on log mais on ne fait pas tomber l'app.
+      debugPrint('[time] Save snapshot failed: $e');
+    }
+  }
+
+  Future<void> _restoreSnapshot() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kMunterSnapshotKey);
+      if (raw == null || raw.isEmpty) return;
+
+      final snapshot = jsonDecode(raw) as Map<String, dynamic>;
+      final ok = _munter.restoreFromSnapshot(snapshot);
+      if (ok) {
+        debugPrint('[time] Calibration Munter restaurée '
+            '(${_munter.calibrationReport()['measurements']} mesures, '
+            '${_munter.calibrationReport()['weight']}).');
+        notifyListeners();
+      } else {
+        // Signature de profil différente — on jette le vieux snapshot et
+        // on repart proprement.
+        debugPrint('[time] Profil changé, snapshot Munter ignoré.');
+        await prefs.remove(_kMunterSnapshotKey);
+      }
+    } catch (e) {
+      debugPrint('[time] Restore snapshot failed: $e');
+    }
+  }
+
+  /// Efface manuellement la calibration sauvegardée.
+  /// Utile pour un bouton "Réinitialiser la calibration" dans Réglages.
+  Future<void> clearMunterCalibration() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kMunterSnapshotKey);
+    _rebuildEngine();
   }
 }

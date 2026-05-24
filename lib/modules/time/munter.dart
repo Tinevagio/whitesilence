@@ -31,6 +31,11 @@ class MunterProfile {
     required this.fitness,
     required this.terrain,
   });
+
+  /// Signature compacte du profil — utilisée pour invalider la persistance
+  /// quand le profil change (les mesures précédentes ne sont plus pertinentes
+  /// pour un nouveau baseline).
+  String get signature => '${activity.name}/${fitness.name}/${terrain.name}';
 }
 
 // ─── Paramètres Munter ────────────────────────────────────────────────────────
@@ -147,6 +152,13 @@ class MunterEngine {
       elevLoss:      elevLoss,
       actualSeconds: actualSeconds,
     ));
+    // Garder uniquement les 20 dernières mesures (sliding window = fenêtre
+    // de calibration). Évite l'accumulation infinie en RAM et garde la
+    // calibration "fraîche" (n'inclut pas des mesures vieilles de plusieurs
+    // sorties qui ne sont plus représentatives).
+    if (_measurements.length > 20) {
+      _measurements.removeRange(0, _measurements.length - 20);
+    }
     _recalibrate();
   }
 
@@ -220,6 +232,57 @@ class MunterEngine {
     'ascentRate':       _params.ascentRate.toStringAsFixed(0),
     'descentRate':      _params.descentRate.toStringAsFixed(0),
   };
+
+  // ── Persistance ─────────────────────────────────────────────────────────
+  //
+  // Snapshot = signature profil + mesures GPS récentes. La signature permet
+  // de jeter la persistance quand l'utilisateur change de profil (différents
+  // baselines → mesures non comparables).
+  //
+  // Les params calibrés (`_params`) ne sont PAS sauvés directement : ils sont
+  // recalculés depuis les mesures + baseline. Ça évite les incohérences entre
+  // params stockés et baseline courante.
+
+  /// Snapshot pour persistance. Inclut la signature du profil.
+  Map<String, dynamic> toSnapshot() => {
+    'profile':     profile.signature,
+    'measurements': _measurements.map((m) => {
+      'd':  m.distanceM,
+      'g':  m.elevGain,
+      'l':  m.elevLoss,
+      's':  m.actualSeconds,
+    }).toList(),
+  };
+
+  /// Recharge les mesures depuis un snapshot précédent et recalibre.
+  /// Retourne `true` si la restauration a eu lieu (profil compatible),
+  /// `false` sinon (signature différente → snapshot ignoré).
+  bool restoreFromSnapshot(Map<String, dynamic> snapshot) {
+    final sig = snapshot['profile'] as String?;
+    if (sig == null || sig != profile.signature) return false;
+
+    final raw = snapshot['measurements'];
+    if (raw is! List) return false;
+
+    _measurements.clear();
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final d = (item['d'] as num?)?.toDouble();
+      final g = (item['g'] as num?)?.toDouble();
+      final l = (item['l'] as num?)?.toDouble();
+      final s = (item['s'] as num?)?.toDouble();
+      if (d == null || g == null || l == null || s == null) continue;
+      _measurements.add(_GpsMeasurement(
+        distanceM:     d,
+        elevGain:      g,
+        elevLoss:      l,
+        actualSeconds: s,
+      ));
+    }
+
+    if (_measurements.isNotEmpty) _recalibrate();
+    return true;
+  }
 }
 
 class _GpsMeasurement {
