@@ -18,6 +18,7 @@ import '../../core/module_navigator.dart';
 import '../../core/module_registry.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/spacing.dart';
+import 'bera_detail_screen.dart';
 import 'conditions_date_chip.dart';
 import '../../core/theme/typography.dart';
 import 'condition_detail_sheet.dart';
@@ -241,16 +242,22 @@ class _GridLayer extends StatelessWidget {
         if (points.isEmpty) return const SizedBox.shrink();
 
         final hour = controller.selectedHourUtc;
-        const radiusPx = 11.0;
+        // Taille alignée avec le frontend Netlify (.sm en CSS = 11px de
+        // diamètre soit 5.5px de rayon). Pas de scale au zoom : la densité
+        // de la grille (500m) reste lisible sur tous les niveaux usuels.
+        const radiusPx = 5.5;
 
+        // Bord blanc semi-transparent → détache chaque point du fond topo
+        // (sinon les marrons/oranges se confondent avec les courbes de niveau).
+        // Reprise du style .sm Netlify : border:1.5px solid rgba(255,255,255,.75).
         final circles = <CircleMarker>[
           for (final p in points)
             CircleMarker(
               point: p.latLng,
               radius: radiusPx,
               color: _colorFor(p, hour),
-              borderColor: Colors.transparent,
-              borderStrokeWidth: 0,
+              borderColor: Colors.white.withOpacity(0.75),
+              borderStrokeWidth: 1.5,
             ),
         ];
         return CircleLayer(circles: circles);
@@ -260,9 +267,13 @@ class _GridLayer extends StatelessWidget {
 
   Color _colorFor(PointConditions p, int hour) {
     final h = p.conditionAt(hour);
-    if (h == null) return WSColors.glacierMid.withOpacity(0.2);
+    // Points sans donnée : gris pâle légèrement transparent pour qu'ils
+    // soient discrets sans complètement disparaître.
+    if (h == null) return WSColors.glacierMid.withOpacity(0.4);
     final meta = ConditionMeta.forCode(h.condition);
-    return meta.color.withOpacity(0.55);
+    // Couleur opaque pleine — comme le frontend Netlify (CSS background pur).
+    // L'ancien 0.55 d'opacité dispersait visuellement les points.
+    return meta.color;
   }
 }
 
@@ -987,8 +998,37 @@ class _BeraChip extends StatelessWidget {
     final risk = bera.displayRisk;
     final riskColor = _riskColor(risk);
     final riskTxt = risk == null ? '?' : '$risk/5';
+    final massifName = bera.massifName;
 
-    return Container(
+    // Le chip devient tappable si on a un nom de massif : ouvre l'écran
+    // détail BERA (récupère le bulletin complet depuis le repo public
+    // ski-touring-live mis à jour quotidiennement).
+    final canOpenDetail = massifName != null && massifName.trim().isNotEmpty;
+
+    final inner = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10, height: 10,
+          decoration: BoxDecoration(color: riskColor, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: WSSpacing.sm),
+        Text(
+          '${massifName ?? "Massif"}  ·  BERA $riskTxt',
+          style: WSText.caption.copyWith(
+            color: WSColors.slateDark,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        if (canOpenDetail) ...[
+          const SizedBox(width: 4),
+          Icon(Icons.chevron_right,
+              size: 14, color: WSColors.slateDark.withOpacity(0.5)),
+        ],
+      ],
+    );
+
+    final container = Container(
       padding: const EdgeInsets.symmetric(
         horizontal: WSSpacing.md, vertical: WSSpacing.xs,
       ),
@@ -997,23 +1037,15 @@ class _BeraChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(WSRadius.md),
         border: Border.all(color: riskColor.withOpacity(0.4), width: 0.5),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 10, height: 10,
-            decoration: BoxDecoration(color: riskColor, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: WSSpacing.sm),
-          Text(
-            '${bera.massifName ?? "Massif"}  ·  BERA $riskTxt',
-            style: WSText.caption.copyWith(
-              color: WSColors.slateDark,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
+      child: inner,
+    );
+
+    if (!canOpenDetail) return container;
+
+    return InkWell(
+      onTap: () => BeraDetailScreen.open(context, massifName),
+      borderRadius: BorderRadius.circular(WSRadius.md),
+      child: container,
     );
   }
 
@@ -1543,4 +1575,3 @@ class _SnowHeatmapControls extends StatelessWidget {
     );
   }
 }
-

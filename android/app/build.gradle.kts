@@ -1,8 +1,18 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // Le plugin Flutter doit être appliqué après les plugins Android et Kotlin.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Récupération des propriétés du keystore pour la signature de l'application
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -15,26 +25,43 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    @Suppress("DEPRECATION")
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+        // Syntaxe propre sous forme de chaîne de caractères, universelle pour Kotlin DSL
+        jvmTarget = "17"
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "app.whitesilence.whitesilence"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+            val storeFilePath = keystoreProperties.getProperty("storeFile")
+            storeFile = if (storeFilePath != null) file(storeFilePath) else null
+            storePassword = keystoreProperties.getProperty("storePassword")
+        }
+    }
+
     buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+        getByName("release") {
+            // Associe la configuration de signature créée ci-dessus
+            signingConfig = signingConfigs.getByName("release")
+            
+            // Syntaxe Kotlin DSL corrigée (isMinifyEnabled et isShrinkResources)
+            isMinifyEnabled = true
+            isShrinkResources = true
+            
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }
@@ -43,10 +70,7 @@ flutter {
     source = "../.."
 }
 
-// IMPORTANT : ce bloc doit être à la RACINE du fichier (au même niveau que
-// `android { ... }` et `flutter { ... }`), PAS à l'intérieur de l'un d'eux.
-// Sinon Gradle Kotlin DSL l'ignore silencieusement et la lib n'arrive jamais
-// dans le classpath — symptôme : "Unresolved reference 'WakeWordModel'".
 dependencies {
+    // Votre bibliothèque openwakeword bien placée à la racine du fichier
     implementation("xyz.rementia:openwakeword:0.1.5")
 }

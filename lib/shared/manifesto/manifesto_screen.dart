@@ -40,60 +40,83 @@ class ManifestoScreen extends StatelessWidget {
             Text('Pourquoi WhiteSilence', style: WSText.heading),
             const SizedBox(height: WSSpacing.md),
             Text(
-              'Je skie en montagne depuis toujours, et avec les années, '
-              'j\'ai compris que nous y cherchons des expériences brutes '
-              'qu\'on ne trouve nulle part ailleurs. Cette sensation '
-              'incroyable de voler au-dessus de trente centimètres de '
-              'poudreuse légère, ou de savourer la souplesse parfaite '
-              'd\'une belle neige de printemps. On oublie le bruit d\'en '
-              'bas. On respire.',
-              style: WSText.body.copyWith(height: 1.6),
-            ),
-            const SizedBox(height: WSSpacing.md),
-            Text(
-              'Pourtant, l\'instant d\'après, la montagne nous rappelle '
-              'sa gravité. C\'est la chaleur étouffante d\'une pente sud '
-              'en mai, quand la neige décolle sous le soleil. Puis, dès '
-              'qu\'on bascule dans l\'ombre, le froid glacial d\'un '
-              'couloir nord qui te saisit l\'échine. Dans ces '
-              'moments-là, on est seul avec ses doutes. Avec la peur '
-              'sourde de se faire coffrer, le cœur qui s\'accélère avant '
-              'un virage engagé au-dessus du vide, là où on sait que '
-              'l\'erreur ne pardonne pas.',
-              style: WSText.body.copyWith(height: 1.6),
-            ),
-            const SizedBox(height: WSSpacing.md),
-            Text(
-              'J\'ai créé WhiteSilence pour apaiser cette part d\'ombre. '
-              'Je voulais un compagnon discret qui prenne l\'inquiétude '
-              'à sa charge pour libérer l\'esprit. L\'application est là '
-              'pour t\'aider à lire l\'évolution du manteau neigeux au '
-              'fil des heures, à visualiser les risques d\'avalanche '
-              'directement sur la carte, et à simuler simplement tes '
-              'temps de parcours. Elle met à ta portée les '
-              'observations les plus récentes et les plus précises, pile '
-              'sur ton point GPS.',
-              style: WSText.body.copyWith(height: 1.6),
-            ),
-            const SizedBox(height: WSSpacing.md),
-            Text(
-              'Une fois l\'esprit serein, le miracle de la glisse revient.',
-              style: WSText.body.copyWith(height: 1.6),
-            ),
-            const SizedBox(height: WSSpacing.md),
-            Text(
-              'Si tu cherches toi aussi cette clarté, et le plaisir '
-              'd\'une courbe tracée dans le silence… cette application '
-              'est pour toi.',
-              style: WSText.body.copyWith(height: 1.6),
-            ),
-            const SizedBox(height: WSSpacing.md),
-            Text(
-              'Pas de compte, pas d\'e-mail, pas de compétition. '
-              'Aucune trace de ton passage.',
-              style: WSText.body.copyWith(height: 1.6),
-            ),
-            const SizedBox(height: WSSpacing.md),
+			  'Je skie en montagne depuis toujours, et avec les années, '
+			  'j\'ai compris que nous y cherchons des expériences '
+			  'qu\'aucun autre lieu ne sait offrir. Cette sensation '
+			  'incroyable de flotter au-dessus d\'une neige poudreuse, '
+			  'légère comme une poussière de lumière. La montagne '
+			  'efface le monde d\'en bas. Elle ralentit le temps. '
+			  'Chaque virage devient un silence.',
+			  style: WSText.body.copyWith(height: 1.6),
+			),
+			const SizedBox(height: WSSpacing.md),
+			Text(
+			  'Parfois, au petit matin, la pente est encore intacte. '
+			  'La neige repose là, lisse, parfaite, presque fragile '
+			  'sous le ciel froid. Elle a quelque chose d\'endormi. '
+			  'On avance alors avec précaution, comme si la montagne '
+			  'retenait son souffle sous nos pas.',
+			  style: WSText.body.copyWith(height: 1.6),
+			),
+			const SizedBox(height: WSSpacing.md),
+			Text(
+			  'Mais l\'instant d\'après, elle rappelle sa puissance. '
+			  'La chaleur lourde d\'une pente sud au printemps, quand '
+			  'le manteau se fissure doucement sous le soleil. Puis '
+			  'l\'ombre brusque d\'un couloir nord, le froid sec qui '
+			  'saisit la poitrine, le doute qui revient. Le cœur '
+			  'accélère avant un passage exposé. Là-haut, l\'erreur '
+			  'ne pardonne jamais vraiment.',
+			  style: WSText.body.copyWith(height: 1.6),
+			),
+			const SizedBox(height: WSSpacing.md),
+			Text(
+			  'J\'ai créé WhiteSilence pour alléger cette tension '
+			  'invisible. Je voulais un compagnon discret, capable de '
+			  'veiller pendant que l\'esprit retrouve sa liberté. Une '
+			  'application pensée pour lire l\'évolution du manteau '
+			  'neigeux heure après heure, visualiser les risques '
+			  'd\'avalanche directement sur la carte et estimer '
+			  'simplement les temps de parcours.',
+			  style: WSText.body.copyWith(height: 1.6),
+			),
+			const SizedBox(height: WSSpacing.md),
+			Text(
+			  'WhiteSilence rassemble les observations les plus '
+			  'récentes et les plus précises, exactement là où tu te '
+			  'trouves. Pour que, lorsque tout devient silencieux '
+			  'autour de toi, il ne reste plus qu\'une chose : la '
+			  'beauté pure du mouvement dans la montagne.',
+			  style: WSText.body.copyWith(height: 1.6),
+			),
+			const SizedBox(height: WSSpacing.md),
+			Text(
+			  'Une fois l\'esprit apaisé, la montagne redevient ce '
+			  'qu\'elle a toujours été : un espace de grâce. La neige '
+			  'recommence à parler sous les skis avec cette douceur '
+			  'presque irréelle des grands jours d\'hiver. Une courbe '
+			  'lente tracée dans une pente vierge suffit alors à '
+			  'remplir le silence.',
+			  style: WSText.body.copyWith(height: 1.6),
+			),
+			const SizedBox(height: WSSpacing.md),
+			Text(
+			  'Si tu cherches toi aussi cette clarté-là, celle où le '
+			  'corps avance sans bruit et où l\'esprit cesse enfin de '
+			  'lutter, alors cette application est faite pour toi.',
+			  style: WSText.body.copyWith(height: 1.6),
+			),
+			const SizedBox(height: WSSpacing.md),
+			Text(
+			  'Ici, rien ne te suit. Aucun compte. Aucun identifiant. '
+			  'Aucune mémoire cachée de ton passage. La montagne n\'a '
+			  'jamais demandé ton adresse e-mail pour t\'accueillir au '
+			  'lever du jour, ni ton consentement pour ouvrir devant '
+			  'toi une pente intacte.',
+			  style: WSText.body.copyWith(height: 1.6),
+			),
+			const SizedBox(height: WSSpacing.md),
+			
             Text(
               'Libre, enfin.',
               style: WSText.body.copyWith(

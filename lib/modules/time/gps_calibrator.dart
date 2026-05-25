@@ -202,7 +202,7 @@ class GpsCalibrator {
     'poids':       '${(munter.calibrationWeight * 100).toStringAsFixed(0)}%',
     'calibré':     munter.isCalibrated
         ? 'Oui'
-        : 'Non (${_segmentsAccepted < 3 ? "pas assez de données" : "en cours…"})',
+        : 'Non (${_segmentsAccepted < 3 ? "pas assez" : "en cours…"})',
     'hSpeed':      '${munter.currentParams.horizontalSpeed.toStringAsFixed(2)} km/h',
     'ascentRate':  '${munter.currentParams.ascentRate.toStringAsFixed(0)} m/h',
     'descentRate': '${munter.currentParams.descentRate.toStringAsFixed(0)} m/h',

@@ -551,25 +551,32 @@ class _CalibrationSheet extends StatelessWidget {
               const SizedBox(width: WSSpacing.sm),
               const Text('Paramètres Munter', style: WSText.title),
               const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: WSSpacing.md, vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: isCalibrated
-                      ? WSColors.powderGreen.withOpacity(0.18)
-                      : WSColors.glacierMid.withOpacity(0.25),
-                  borderRadius: BorderRadius.circular(WSRadius.pill),
-                ),
-                child: Text(
-                  isCalibrated
-                      ? '✓ Calibré ${report['poids']}'
-                      : (report['calibré'] ?? 'Baseline'),
-                  style: WSText.caption.copyWith(
+              // Flexible permet au chip de rétrécir si le texte de status
+              // est plus long que la place dispo (sinon overflow + bande
+              // noir/jaune de debug Flutter). L'ellipsis fait le reste.
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: WSSpacing.md, vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
                     color: isCalibrated
-                        ? WSColors.powderGreen
-                        : WSColors.stoneGray,
-                    fontWeight: FontWeight.w600,
+                        ? WSColors.powderGreen.withOpacity(0.18)
+                        : WSColors.glacierMid.withOpacity(0.25),
+                    borderRadius: BorderRadius.circular(WSRadius.pill),
+                  ),
+                  child: Text(
+                    isCalibrated
+                        ? '✓ Calibré ${report['poids']}'
+                        : (report['calibré'] ?? 'Baseline'),
+                    style: WSText.caption.copyWith(
+                      color: isCalibrated
+                          ? WSColors.powderGreen
+                          : WSColors.stoneGray,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ),
