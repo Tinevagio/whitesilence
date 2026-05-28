@@ -231,6 +231,17 @@ class _QuickObservationSheetState extends State<QuickObservationSheet> {
       await SnowDao().save(obs);
       // Notifier le controller pour rafraîchir la liste affichée
       await SnowController().refreshObservations();
+
+      // ── Upload Supabase en arrière-plan ──────────────────────────────
+      // L'obs rapide est déjà enrichie (snowType défini par l'utilisateur),
+      // donc processPending() la passera direct à Supabase sans Whisper/IA.
+      // Fire-and-forget : on ne bloque pas la fermeture du sheet.
+      // Si l'upload échoue (réseau HS), l'obs reste avec uploaded=false et
+      // sera retentée au prochain processPending() (ou au prochain lancement
+      // de l'app si on branche ça plus tard).
+      // ignore: discarded_futures
+      SnowController().processPending();
+
       if (mounted) Navigator.of(context).pop(obs);
     } catch (e) {
       if (mounted) {

@@ -663,11 +663,27 @@ class _ConditionsActionPanelState extends State<_ConditionsActionPanel> {
                           : FilledButton.icon(
                               onPressed: controller.startDrawing,
                               icon: const Icon(Icons.crop_free, size: 18),
-                              label: Text(controller.accumulatedPoints.isEmpty
-                                  ? 'Dessiner ma zone'
-                                  : 'Ajouter une zone'),
+                              label: Text(
+                                controller.accumulatedPoints.isEmpty
+                                    ? 'Dessiner ma zone'
+                                    : 'Ajouter une zone',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                     ),
+                    // Bouton "Ici" : charge les conditions autour de la
+                    // position GPS (box 5x5 km auto), sans dessiner à la main.
+                    // Raccourci terrain. Masqué pendant le chargement pour
+                    // ne pas empiler les actions.
+                    if (controller.status != ConditionsStatus.loading) ...[
+                      const SizedBox(width: WSSpacing.sm),
+                      OutlinedButton.icon(
+                        onPressed: widget.onFetchHere,
+                        icon: const Icon(Icons.my_location, size: 18),
+                        label: const Text('Ici'),
+                      ),
+                    ],
                     if (controller.accumulatedPoints.isNotEmpty) ...[
                       const SizedBox(width: WSSpacing.sm),
                       IconButton.outlined(

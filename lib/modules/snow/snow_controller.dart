@@ -102,9 +102,13 @@ class SnowController extends ChangeNotifier {
 
     // S'assure que le micro a la permission (pour quand le wake word
     // détectera et qu'on devra démarrer l'enregistrement immédiatement)
-    final micOk = await _recording.init();
-    if (!micOk) {
-      _statusMessage = 'Permission micro refusée';
+    final micResult = await _recording.init();
+    if (micResult != RecordingInitResult.ok) {
+      // Message adapté au type de refus pour orienter l'utilisateur.
+      _statusMessage = micResult ==
+              RecordingInitResult.permissionPermanentlyDenied
+          ? 'Permission micro refusée — ouvre les Réglages Android'
+          : 'Permission micro refusée';
       notifyListeners();
       return false;
     }
@@ -179,13 +183,27 @@ class SnowController extends ChangeNotifier {
     // Initialise les sons (génère les bips au premier lancement)
     await _sound.init();
 
-    // Marque toutes les obs historiques comme déjà uploadées : on ne réuploade
-    // pas l'historique au premier démarrage du module
-    // (cohérent avec ce que faisait Hey Snowy au démarrage de HomeScreen)
-    await _dao.markAllAsUploaded();
-
-    // Charge les obs de la session courante pour les pins
+    // Charge les obs locales pour affichage immédiat des pins.
     await refreshObservations();
+
+    // Filet de sécurité : lance un processPending() en arrière-plan pour
+    // uploader vers Supabase toute obs qui aurait `uploaded = false` (création
+    // hors-ligne, app crash entre save et upload, obs rapide créée sans avoir
+    // déclenché Whisper/IA, etc.). Sans ça, des obs peuvent rester locales
+    // indéfiniment et ne jamais être partagées avec la communauté.
+    //
+    // Fire-and-forget : ne bloque pas le démarrage du module. Si le réseau
+    // est HS, le processPending échouera silencieusement et sera retenté
+    // au prochain démarrage de l'app.
+    //
+    // NOTE — Auparavant, ce bloc faisait `_dao.markAllAsUploaded()` pour
+    // éviter de réuploader l'historique migré depuis Hey Snowy. Mais cette
+    // approche tuait le mécanisme d'upload en attente : toute obs créée
+    // mais pas encore uploadée était marquée comme uploadée au redémarrage,
+    // donc jamais traitée. On corrige en uploadant explicitement le pending
+    // au lieu de le marquer faussement comme déjà fait.
+    // ignore: discarded_futures
+    processPending();
   }
 
   /// Recharge les observations depuis la BDD locale.

@@ -1,7 +1,15 @@
 // lib/modules/snow/services/processing_service.dart
 //
-// Pipeline batch : transcription → extraction IA → persistance → upload.
-// Migré depuis Hey Snowy avec adaptation aux nouveaux DAO/services.
+// Pipeline de traitement des observations.
+//
+// Deux cas d'usage :
+//   1. Obs vocales (audioPath non vide) : Whisper → IA → Supabase
+//   2. Obs rapides (audioPath vide)     : déjà enrichies par l'utilisateur,
+//                                         passage direct à Supabase
+//
+// L'upload Supabase a lieu seulement si :
+//   - shareWithCommunity = true
+//   - l'obs est "enrichie" (au minimum un snowType défini)
 
 import 'package:flutter/foundation.dart';
 
@@ -23,10 +31,10 @@ class ProcessingResult {
 }
 
 class ProcessingService {
+  final SnowDao _dao = SnowDao();
   final TranscriptionService _transcription = TranscriptionService();
-  final AiService             _ai           = AiService();
-  final SupabaseService       _supabase     = SupabaseService();
-  final SnowDao               _dao          = SnowDao();
+  final AiService _ai = AiService();
+  final SupabaseService _supabase = SupabaseService();
 
   /// Traite chaque obs de [observations] séquentiellement. [onProgress]
   /// est appelé après chaque obs avec son index 1-based et le total.
@@ -42,20 +50,24 @@ class ProcessingService {
       final obs = observations[i];
       onProgress(i + 1, observations.length);
 
-      // 1. Transcription
-      final transcript = await _transcription.transcribe(obs.audioPath);
-      if (transcript == null || transcript.isEmpty) {
-        obs.rawNotes = 'Transcription échouée';
-        await _dao.update(obs);
-        failed++;
-        continue;
+      Observation enriched = obs;
+
+      // ── Cas 1 : obs vocale → pipeline Whisper + IA ──────────────────────
+      if (obs.audioPath.isNotEmpty) {
+        final transcript = await _transcription.transcribe(obs.audioPath);
+        if (transcript == null || transcript.isEmpty) {
+          obs.rawNotes = 'Transcription échouée';
+          await _dao.update(obs);
+          failed++;
+          continue;
+        }
+        enriched = await _ai.extractSnowData(obs, transcript);
+        await _dao.update(enriched);
       }
+      // ── Cas 2 : obs rapide (sans audio) → déjà enrichie par l'utilisateur,
+      // on saute Whisper et l'IA et on passe direct à l'upload.
 
-      // 2. Extraction IA
-      final enriched = await _ai.extractSnowData(obs, transcript);
-      await _dao.update(enriched);
-
-      // 3. Upload Supabase (si autorisé et obs vraiment enrichie)
+      // ── Upload Supabase ─────────────────────────────────────────────────
       if (shareWithCommunity && enriched.isEnriched) {
         final ok = await _supabase.uploadObservation(enriched);
         if (ok) {

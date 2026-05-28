@@ -46,14 +46,20 @@ Future<void> main() async {
     SupabaseService.initialize(), // no-op si clés absentes
   ]);
 
-  // Démarre le GPS — partagé entre tous les modules.
-  GpsService().start().catchError((e) {
-    debugPrint('[main] GPS start failed: $e');
-  });
+  // ⚠️ NE PAS appeler GpsService().start() ICI.
+  //
+  // requestPermission() côté Android a besoin que l'Activity soit en
+  // foreground et l'UI initialisée pour pouvoir afficher la boîte de
+  // dialogue système de permission. Si on appelle start() avant runApp,
+  // sur certains appareils le dialogue ne s'affiche jamais et la
+  // permission n'est jamais demandée — bug observé en bêta sur des
+  // téléphones vierges.
+  //
+  // → On démarre le GPS dans _AppEntrypoint après runApp, voir plus bas.
 
-  // Démarre le contrôleur du module Temps (branche le calibrateur sur le GPS).
-  // Le SnowController.start() est appelé paresseusement par son action panel
-  // (il a besoin de permission micro qu'on ne demande qu'au premier usage).
+  // TimeController().start() est OK ici : il ne demande pas de permission
+  // système, il écoute juste GpsService (qui peut être null tant que start()
+  // n'a pas eu lieu — TimeController gère ce cas).
   TimeController().start();
 
   runApp(const WhiteSilenceApp());
@@ -110,7 +116,35 @@ class _AppEntrypointState extends State<_AppEntrypoint> {
 
   Future<void> _checkOnboarding() async {
     final seen = await OnboardingService().hasSeenCurrent();
-    if (mounted) setState(() => _onboardingDone = seen);
+    if (!mounted) return;
+    setState(() => _onboardingDone = seen);
+
+    // ⚠️ Démarrage GPS APRÈS le rendu, et seulement si l'onboarding a
+    // déjà été vu (sinon on attendra la fin de l'onboarding pour demander
+    // la permission, dans un contexte UX plus naturel).
+    //
+    // addPostFrameCallback garantit que l'Activity Android est totalement
+    // initialisée avant qu'on demande la permission, sinon le dialogue
+    // système peut être avalé silencieusement sur certains téléphones.
+    if (seen) {
+      _startGpsAfterFrame();
+    }
+  }
+
+  /// Appelé par OnboardingScreen quand l'utilisateur termine. On démarre
+  /// le GPS à ce moment : l'utilisateur a vu l'écran d'accueil, comprend
+  /// l'app, la demande de permission a du sens contextuellement.
+  void _onOnboardingFinished() {
+    setState(() => _onboardingDone = true);
+    _startGpsAfterFrame();
+  }
+
+  void _startGpsAfterFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      GpsService().start().catchError((e) {
+        debugPrint('[main] GPS start failed: $e');
+      });
+    });
   }
 
   @override
@@ -123,7 +157,7 @@ class _AppEntrypointState extends State<_AppEntrypoint> {
     }
     if (_onboardingDone == false) {
       return OnboardingScreen(
-        onFinished: () => setState(() => _onboardingDone = true),
+        onFinished: _onOnboardingFinished,
       );
     }
     return WSShell(overlays: [
