@@ -6,9 +6,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/colors.dart';
+import '../../core/theme/snow_palette.dart';
 import '../../core/theme/spacing.dart';
 import '../../core/theme/typography.dart';
-import 'conditions_controller.dart';
 import 'models/condition_code.dart';
 import 'models/point_conditions.dart';
 
@@ -71,16 +71,21 @@ class ConditionDetailSheet extends StatelessWidget {
                 itemBuilder: (_, i) {
                   final h = hours[i];
                   final isSelected = h.hour == selectedHour;
-                  final meta = ConditionMeta.forCode(h.condition);
+                  // Quand le point est sans neige, on utilise la couleur
+                  // dédiée pour TOUTES les heures du bandeau : aucune
+                  // condition n'a de sens si la pente est sèche.
+                  final color = point.isNoSnow
+                      ? SnowPalette.noSnowColor
+                      : ConditionMeta.forCode(h.condition).color;
                   return Padding(
                     padding: const EdgeInsets.only(right: 6),
                     child: Container(
                       width: 36,
                       decoration: BoxDecoration(
-                        color: meta.color.withOpacity(isSelected ? 0.32 : 0.15),
+                        color: color.withOpacity(isSelected ? 0.32 : 0.15),
                         borderRadius: BorderRadius.circular(WSRadius.sm),
                         border: Border.all(
-                          color: isSelected ? meta.color : Colors.transparent,
+                          color: isSelected ? color : Colors.transparent,
                           width: 1.5,
                         ),
                       ),
@@ -171,6 +176,7 @@ class _BeraSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bera = point.bera!;
+    final estimated = point.estimatedDepthCm;
     return Container(
       padding: const EdgeInsets.all(WSSpacing.md),
       decoration: BoxDecoration(
@@ -198,6 +204,36 @@ class _BeraSummary extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
+          // ── Épaisseur estimée à ce point précis (interpolation BERA) ──
+          // Mise en avant en pleine ligne car c'est l'info la plus utile
+          // pour décider d'aller skier ce point. Reprise du HTML Netlify.
+          if (estimated != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.straighten,
+                    size: 14,
+                    color: point.isNoSnow
+                        ? SnowPalette.noSnowColor
+                        : WSColors.glacierBlue,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    point.isNoSnow
+                        ? 'Pas de neige (${estimated.round()} cm estimés)'
+                        : 'Neige estimée : ${estimated.round()} cm',
+                    style: WSText.caption.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: point.isNoSnow
+                          ? SnowPalette.noSnowColor
+                          : WSColors.slateDark,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Wrap(
             spacing: WSSpacing.md,
             runSpacing: WSSpacing.xs,
@@ -229,6 +265,52 @@ class _CurrentHourBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ── Cas "Pas de neige" : on shunte complètement la condition serveur ──
+    // L'info "Neige humide lourde" ou "Croûte" n'a aucun sens si le terrain
+    // est sec. On affiche un message dédié à la place.
+    if (point.isNoSnow) {
+      final color = SnowPalette.noSnowColor;
+      return Container(
+        padding: const EdgeInsets.all(WSSpacing.md),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(WSRadius.md),
+          border: Border.all(color: color.withOpacity(0.4), width: 0.5),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 14, height: 14,
+              decoration: BoxDecoration(
+                color: color, shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: WSSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    SnowPalette.noSnowLabel,
+                    style: WSText.body.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Pente probablement sèche à cette altitude '
+                    'et cette exposition.',
+                    style: WSText.caption,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final h = point.conditionAt(hour);
     if (h == null) return const SizedBox.shrink();
     final meta = ConditionMeta.forCode(h.condition);

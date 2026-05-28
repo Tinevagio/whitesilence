@@ -34,6 +34,10 @@ class HourlyCondition {
 }
 
 class PointConditions {
+  /// Seuil en cm sous lequel on considère que le point est "sans neige".
+  /// Aligné avec le frontend Netlify d'origine.
+  static const double noSnowThresholdCm = 5.0;
+
   final double lat;
   final double lon;
   final double elevationM;
@@ -91,6 +95,27 @@ class PointConditions {
       }
     }
     return best;
+  }
+
+  // ── Épaisseur de neige estimée (interpolation BERA) ─────────────────────
+  //
+  // Le backend ne fournit pas directement une hauteur de neige pour ce point :
+  // il fournit un BERA avec 3 paliers d'altitude (typ. 1500/2000/2500 m), et
+  // c'est au client d'interpoler en fonction de l'altitude réelle du point
+  // et de son exposition (Nord ou Sud).
+  //
+  // Reprise de la logique du frontend Netlify (cf. Front End V7.html).
+
+  /// Épaisseur de neige estimée en cm pour ce point.
+  /// Null si pas de BERA disponible ou pas de niveaux d'enneigement.
+  double? get estimatedDepthCm =>
+      bera?.estimatedDepthCm(elevationM, aspectDeg);
+
+  /// Vrai si l'épaisseur estimée est ≤ noSnowThresholdCm (5 cm).
+  /// Permet d'afficher "Pas de neige" au lieu d'une condition trompeuse.
+  bool get isNoSnow {
+    final d = estimatedDepthCm;
+    return d != null && d <= noSnowThresholdCm;
   }
 }
 

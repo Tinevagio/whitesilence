@@ -16,7 +16,7 @@
 // consulté. Maintenant tout est aligné via SnowFamily.
 //
 // Architecture :
-//   1. SnowFamily : enum des 9 familles canoniques
+//   1. SnowFamily : enum des 10 familles canoniques (incl. noSnow)
 //   2. SnowPalette.colorFor(family) : la couleur de référence
 //   3. familyFromConditionCode(code) : mapping backend → famille
 //   4. familyFromUserType(type)      : mapping vocabulaire user → famille
@@ -28,7 +28,7 @@
 
 import 'package:flutter/material.dart';
 
-/// Les 9 familles canoniques de neige reconnues par WhiteSilence.
+/// Les 10 familles canoniques de neige reconnues par WhiteSilence.
 ///
 /// Les modules backend (Conditions) et les modules utilisateur (Obs/Community)
 /// mappent leurs propres codes/vocabulaires vers ces familles. C'est CETTE
@@ -58,6 +58,12 @@ enum SnowFamily {
   /// Zone de purge. Débris d'avalanche / coulée.
   purge,
 
+  /// Pas de neige (épaisseur estimée ≤ 5 cm).
+  /// Pas un type de neige à proprement parler, mais un signal de surface
+  /// nue importante pour ne pas tromper le skieur. Distinct de `undefined`
+  /// qui signifie "données manquantes / inconnu".
+  noSnow,
+
   /// Indéterminé ou non reconnu (ex: "autre" dans une observation).
   undefined,
 }
@@ -80,6 +86,7 @@ class SnowPalette {
     SnowFamily.wetHeavy:     Color(0xFF8B572A), // brun (soggy, eau dans la neige)
     SnowFamily.oldPacked:    Color(0xFFB0C8D8), // bleu très pâle
     SnowFamily.purge:        Color(0xFF564C42), // brun-gris foncé (débris)
+    SnowFamily.noSnow:       Color(0xFFA89380), // brun roche (sol/cailloux nus)
     SnowFamily.undefined:    Color(0xFFB4B2A9), // gris neutre
   };
 
@@ -93,6 +100,7 @@ class SnowPalette {
     SnowFamily.wetHeavy:     'Neige humide lourde',
     SnowFamily.oldPacked:    'Neige ancienne',
     SnowFamily.purge:        'Zone de purge',
+    SnowFamily.noSnow:       'Pas de neige',
     SnowFamily.undefined:    'Indéterminé',
   };
 
@@ -108,6 +116,13 @@ class SnowPalette {
   //
   // Reflet exact des constantes de `condition_code.dart`. À synchroniser si
   // le backend ajoute de nouveaux codes.
+  //
+  // Note sur `NO_SNOW` : aujourd'hui le backend ne renvoie PAS ce code (cf.
+  // SnowConditionEnum dans api/main.py). On le supporte ici par anticipation
+  // au cas où il serait ajouté plus tard. Pour l'instant, la détection
+  // "pas de neige" se fait côté client via PointConditions.isNoSnow qui
+  // s'appuie sur l'interpolation BERA — c'est cette logique qui pilote
+  // l'usage de SnowFamily.noSnow dans l'overlay.
   static SnowFamily familyFromConditionCode(String? code) {
     switch (code) {
       case 'POWDER_COLD':   return SnowFamily.powderCold;
@@ -117,6 +132,7 @@ class SnowPalette {
       case 'WET_HEAVY':     return SnowFamily.wetHeavy;
       case 'WIND_AFFECTED': return SnowFamily.windAffected;
       case 'OLD_PACKED':    return SnowFamily.oldPacked;
+      case 'NO_SNOW':       return SnowFamily.noSnow;
       case 'UNDEFINED':
       case null:
       default:              return SnowFamily.undefined;
@@ -160,4 +176,12 @@ class SnowPalette {
   /// Couleur pour un vocabulaire utilisateur (poudre, moquette, ventée...).
   static Color colorForUserType(String? userType) =>
       colorFor(familyFromUserType(userType));
+
+  /// Couleur dédiée pour les points sans neige.
+  /// Wrapper sémantique pour les call sites qui ont déjà déterminé l'état
+  /// via `PointConditions.isNoSnow`.
+  static Color get noSnowColor => colorFor(SnowFamily.noSnow);
+
+  /// Label dédié "Pas de neige".
+  static String get noSnowLabel => labelFor(SnowFamily.noSnow);
 }

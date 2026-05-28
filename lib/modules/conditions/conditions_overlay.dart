@@ -18,6 +18,7 @@ import '../../core/module_navigator.dart';
 import '../../core/module_registry.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/spacing.dart';
+import '../../core/theme/snow_palette.dart';
 import 'bera_detail_screen.dart';
 import 'conditions_date_chip.dart';
 import '../../core/theme/typography.dart';
@@ -266,15 +267,17 @@ class _GridLayer extends StatelessWidget {
   }
 
   Color _colorFor(PointConditions p, int hour) {
-    final h = p.conditionAt(hour);
-    // Points sans donnée : gris pâle légèrement transparent pour qu'ils
-    // soient discrets sans complètement disparaître.
-    if (h == null) return WSColors.glacierMid.withOpacity(0.4);
-    final meta = ConditionMeta.forCode(h.condition);
-    // Couleur opaque pleine — comme le frontend Netlify (CSS background pur).
-    // L'ancien 0.55 d'opacité dispersait visuellement les points.
-    return meta.color;
-  }
+	  // Priorité 1 : "Pas de neige" — interpolation BERA déjà côté client.
+	  // On l'évalue AVANT la condition normale car le backend peut renvoyer
+	  // n'importe quel code (typiquement OLD_PACKED ou UNDEFINED) pour les
+	  // points sous la limite d'enneigement, ce qui est trompeur.
+	  if (p.isNoSnow) return SnowPalette.noSnowColor;
+
+	  final h = p.conditionAt(hour);
+	  if (h == null) return WSColors.glacierMid.withOpacity(0.4);
+	  final meta = ConditionMeta.forCode(h.condition);
+	  return meta.color;
+	}
 }
 
 // ─── Layer avalanche ─────────────────────────────────────────────────────────

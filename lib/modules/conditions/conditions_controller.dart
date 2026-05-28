@@ -10,6 +10,7 @@
 //   - Gérer le slider "heure" (par défaut : heure courante UTC)
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -205,8 +206,22 @@ class ConditionsController extends ChangeNotifier {
   LatLng? _drawAnchor;   // premier coin (où le drag a commencé)
   LatLng? _drawCurrent;  // deuxième coin (à jour pendant le drag)
 
+  /// Limite côté en km : on ne laisse pas l'utilisateur dessiner plus grand
+  /// que ça. Reprise du frontend Netlify (5 km) avec marge un peu plus large
+  /// pour les sorties à grand rayon.
+  ///
+  /// Au-delà, /conditions devient très lent (perf backend) et risque de
+  /// faire exploser le quota Render. Et un BERA + grille à 100 km² couvre
+  /// déjà la quasi-totalité des sorties ski de rando réalistes.
+  static const double maxBboxSideKm = 10.0;
+
   /// Bbox actuellement dessinée (ou en cours de dessin). Null si pas de dessin.
   /// Toujours normalisée : sw = coin sud-ouest, ne = coin nord-est.
+  ///
+  /// **Clampée à maxBboxSideKm dans chaque dimension**, centrée sur le milieu
+  /// de la zone que l'utilisateur tente de dessiner. Du coup le rectangle
+  /// visuel s'arrête tout seul quand l'utilisateur essaie d'étirer plus
+  /// grand — pas besoin de blocage explicite côté UI.
   ({LatLng sw, LatLng ne})? get drawnBbox {
     final a = _drawAnchor, c = _drawCurrent;
     if (a == null || c == null) return null;
@@ -214,7 +229,46 @@ class ConditionsController extends ChangeNotifier {
     final swLon = a.longitude < c.longitude ? a.longitude : c.longitude;
     final neLat = a.latitude  > c.latitude  ? a.latitude  : c.latitude;
     final neLon = a.longitude > c.longitude ? a.longitude : c.longitude;
-    return (sw: LatLng(swLat, swLon), ne: LatLng(neLat, neLon));
+    return _clampBbox(swLat, swLon, neLat, neLon);
+  }
+
+  /// Mesure haversine en km entre deux points. Logique reprise du frontend
+  /// Netlify (Front End V7.html, fonction haversineKm).
+  static double _haversineKm(double lat1, double lon1, double lat2, double lon2) {
+    const r = 6371.0;
+    final dLat = (lat2 - lat1) * math.pi / 180.0;
+    final dLon = (lon2 - lon1) * math.pi / 180.0;
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2)
+        + math.cos(lat1 * math.pi / 180.0) * math.cos(lat2 * math.pi / 180.0)
+          * math.sin(dLon / 2) * math.sin(dLon / 2);
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  }
+
+  /// Clamp d'une bbox à `maxBboxSideKm` dans chaque dimension, centré sur
+  /// le milieu. Logique reprise du frontend Netlify (fonction clampBbox).
+  static ({LatLng sw, LatLng ne}) _clampBbox(
+      double latS, double lonW, double latN, double lonE) {
+    double dLat = latN - latS;
+    double dLon = lonE - lonW;
+
+    final hKm = _haversineKm(latS, lonW, latN, lonW); // hauteur (latitude)
+    final wKm = _haversineKm(latS, lonW, latS, lonE); // largeur (longitude)
+
+    if (hKm > maxBboxSideKm) {
+      final ratio  = maxBboxSideKm / hKm;
+      final center = (latS + latN) / 2;
+      dLat = dLat * ratio;
+      latS = center - dLat / 2;
+      latN = center + dLat / 2;
+    }
+    if (wKm > maxBboxSideKm) {
+      final ratio  = maxBboxSideKm / wKm;
+      final center = (lonW + lonE) / 2;
+      dLon = dLon * ratio;
+      lonW = center - dLon / 2;
+      lonE = center + dLon / 2;
+    }
+    return (sw: LatLng(latS, lonW), ne: LatLng(latN, lonE));
   }
 
   void startDrawing() {
@@ -379,6 +433,16 @@ class ConditionsController extends ChangeNotifier {
   /// Fetch immédiat (sans debounce). Si `force=false` et qu'on a un cache
   /// frais, on utilise le cache sans appel réseau.
   Future<void> fetchGrid(LatLng sw, LatLng ne, {bool force = false}) async {
+    // Défense en profondeur : tronque la bbox à maxBboxSideKm dans chaque
+    // dimension, peu importe l'appelant (drag, "Fetch ici", navigation
+    // depuis Idées, etc.). Si la bbox est déjà sous la limite, ce clamp
+    // est une no-op.
+    final clamped = _clampBbox(
+      sw.latitude, sw.longitude, ne.latitude, ne.longitude,
+    );
+    sw = clamped.sw;
+    ne = clamped.ne;
+
     _lastBbox = _Bbox(sw, ne);
     final key = ConditionsCache.makeKey(
       sw: sw,
