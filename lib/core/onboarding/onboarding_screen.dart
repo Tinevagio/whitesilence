@@ -2,17 +2,28 @@
 //
 // Onboarding à la 1ère exécution (et après reset manuel). 3 pages :
 //   1. Présentation philo : sans inscription, sans tracking, open source
-//   2. Données locales + demande permission GPS
-//   3. Modules vocaux + demande permission micro
+//   2. Données locales + GPS (explications)
+//   3. Modules vocaux
 //
 // Le bouton final "Commencer" marque l'onboarding comme vu et bascule sur
 // l'app principale (WSShell).
+//
+// ── Permissions GPS ─────────────────────────────────────────────────────────
+//
+// On NE demande plus la permission GPS ici. C'est GpsService.start() qui s'en
+// charge, via _startGpsAfterFrame() dans main.dart, juste après la fin de
+// l'onboarding. Demander la permission depuis deux endroits (ici + GpsService)
+// provoquait une double requête : Android avalait silencieusement la seconde et
+// la permission restait bloquée en "denied" sans que le dialogue réapparaisse.
+//
+// Flux corrigé :
+//   OnboardingScreen._finish()
+//     → OnboardingService.markSeen()
+//     → widget.onFinished()           (rappelle _AppEntrypointState)
+//       → _startGpsAfterFrame()
+//         → GpsService().start()      (unique source de vérité pour les perms)
 
-import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:geolocator/geolocator.dart';
 
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -89,7 +100,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 children: [
                   if (_currentPage < 2)
                     TextButton(
-                      onPressed: _finishing ? null : _skip,
+                      onPressed: _finishing ? null : _finish,
                       child: const Text('Passer'),
                     )
                   else
@@ -129,50 +140,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  void _skip() {
-    // "Passer" saute directement à la fin avec les explications, mais ne
-    // demande pas les permissions automatiquement (laisse l'utilisateur les
-    // accorder plus tard à la demande de l'app).
-    _finish(skipPermissions: true);
-  }
-
-  Future<void> _finish({bool skipPermissions = false}) async {
+  /// Termine l'onboarding — que l'utilisateur ait cliqué "Commencer" ou
+  /// "Passer". On NE demande plus de permission ici : GpsService.start()
+  /// s'en charge seul juste après (voir commentaire en tête de fichier).
+  Future<void> _finish() async {
     if (_finishing) return;
     setState(() => _finishing = true);
 
-    if (!skipPermissions) {
-      // On demande GPS d'abord (le plus important pour le ski de rando),
-      // puis micro. On ne bloque PAS sur un refus — l'utilisateur peut
-      // toujours utiliser l'app avec une fonctionnalité dégradée.
-      await _requestGps();
-      // Le micro est demandé "à la demande" la 1ère fois qu'on enregistre
-      // une obs vocale (déjà géré par le module Snow). Pas besoin de le
-      // forcer ici, mais on a déjà préparé l'utilisateur via l'écran 3.
-    }
-
     await OnboardingService().markSeen();
     if (mounted) widget.onFinished();
-  }
-
-  Future<void> _requestGps() async {
-    if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) return;
-    try {
-      // Vérifie d'abord si le service de localisation est activé du système.
-      // Si non, on continue quand même : l'utilisateur ira l'activer en
-      // condition réelle.
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return;
-
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-      }
-      // Si l'utilisateur refuse définitivement (denied/deniedForever), on
-      // n'insiste pas. L'app fonctionnera sans GPS, juste avec moins de
-      // pertinence (pas d'isochrones depuis "moi", pas de "fetch ici", etc.).
-    } catch (_) {
-      // Permission refusée ou autre erreur : on swallow et on continue.
-    }
   }
 }
 
@@ -308,7 +284,7 @@ class _Page2LocalData extends StatelessWidget {
                       ),
                       Text(
                         'Pour les isochrones et la position sur la carte. '
-                        'Demandée à l\'étape suivante.',
+                        'Demandée au lancement de l\'app.',
                         style: WSText.micro
                             .copyWith(color: WSColors.stoneGray),
                       ),

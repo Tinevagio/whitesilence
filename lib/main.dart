@@ -55,7 +55,9 @@ Future<void> main() async {
   // permission n'est jamais demandée — bug observé en bêta sur des
   // téléphones vierges.
   //
-  // → On démarre le GPS dans _AppEntrypoint après runApp, voir plus bas.
+  // → Le GPS est démarré depuis WSShell.initState() via
+  //   GpsService().startWhenReady(), qui attend que le widget soit
+  //   complètement monté avant de demander la permission.
 
   // TimeController().start() est OK ici : il ne demande pas de permission
   // système, il écoute juste GpsService (qui peut être null tant que start()
@@ -96,6 +98,19 @@ class WhiteSilenceApp extends StatelessWidget {
 /// - Au boot : lit `OnboardingService.hasSeenCurrent()` (rapide, prefs).
 /// - Si pas vu : montre OnboardingScreen, puis bascule vers WSShell.
 /// - Si vu : démarre directement sur WSShell.
+///
+/// ── Démarrage GPS ──────────────────────────────────────────────────────────
+///
+/// On ne démarre plus le GPS depuis _AppEntrypointState. C'est WSShell qui
+/// appelle GpsService().start() dans son propre initState(), via
+/// addPostFrameCallback. Cela garantit que l'Activity Android est
+/// complètement initialisée et que la vue est stable avant que le dialogue
+/// de permission système ne s'affiche.
+///
+/// L'ancien pattern (addPostFrameCallback depuis _onOnboardingFinished ou
+/// _checkOnboarding) déclenchait le requestPermission() pendant la transition
+/// OnboardingScreen → WSShell, ce qui provoquait l'absorption silencieuse du
+/// dialogue par Android.
 class _AppEntrypoint extends StatefulWidget {
   const _AppEntrypoint();
   @override
@@ -118,33 +133,13 @@ class _AppEntrypointState extends State<_AppEntrypoint> {
     final seen = await OnboardingService().hasSeenCurrent();
     if (!mounted) return;
     setState(() => _onboardingDone = seen);
-
-    // ⚠️ Démarrage GPS APRÈS le rendu, et seulement si l'onboarding a
-    // déjà été vu (sinon on attendra la fin de l'onboarding pour demander
-    // la permission, dans un contexte UX plus naturel).
-    //
-    // addPostFrameCallback garantit que l'Activity Android est totalement
-    // initialisée avant qu'on demande la permission, sinon le dialogue
-    // système peut être avalé silencieusement sur certains téléphones.
-    if (seen) {
-      _startGpsAfterFrame();
-    }
+    // Le GPS sera démarré par WSShell.initState() — rien à faire ici.
   }
 
-  /// Appelé par OnboardingScreen quand l'utilisateur termine. On démarre
-  /// le GPS à ce moment : l'utilisateur a vu l'écran d'accueil, comprend
-  /// l'app, la demande de permission a du sens contextuellement.
+  /// Appelé par OnboardingScreen quand l'utilisateur termine.
+  /// On bascule simplement vers WSShell ; c'est WSShell qui démarre le GPS.
   void _onOnboardingFinished() {
     setState(() => _onboardingDone = true);
-    _startGpsAfterFrame();
-  }
-
-  void _startGpsAfterFrame() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      GpsService().start().catchError((e) {
-        debugPrint('[main] GPS start failed: $e');
-      });
-    });
   }
 
   @override

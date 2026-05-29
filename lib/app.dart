@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'core/gps/gps_service.dart';
 import 'core/map/map_module_overlay.dart';
 import 'core/map/map_screen.dart';
 import 'core/module_navigator.dart';
@@ -16,6 +17,19 @@ import 'shared/settings/settings_screen.dart';
 ///   - Un bouton réglages en AppBar
 ///
 /// Les modules désactivés disparaissent de la bottom bar.
+///
+/// ── Démarrage GPS ──────────────────────────────────────────────────────────
+///
+/// C'est ici, dans initState() + addPostFrameCallback, que GpsService().start()
+/// est appelé — et nulle part ailleurs.
+///
+/// Pourquoi ici et pas dans main.dart ou _AppEntrypointState ?
+/// requestPermission() sur Android exige que l'Activity soit en foreground ET
+/// que la vue soit stable (pas en cours de transition). WSShell est le premier
+/// widget "final" affiché — il n'est précédé d'aucune animation de navigation.
+/// En plaçant l'appel dans son addPostFrameCallback, on garantit que le frame
+/// est complètement peint et que l'Activity est prête à afficher la boîte de
+/// dialogue système avant qu'on la lui demande.
 class WSShell extends StatefulWidget {
   /// Overlays fournis au démarrage (un par module implémenté).
   /// Cette liste grandit phase après phase.
@@ -38,6 +52,15 @@ class _WSShellState extends State<WSShell> {
     _registry.addListener(_onRegistryChanged);
     _navigator.requestedModule.addListener(_onNavRequest);
     _pickFirstAvailable();
+
+    // Démarrage GPS : on attend que le premier frame soit peint pour être sûr
+    // que l'Activity Android est prête à afficher le dialogue de permission.
+    // GpsService.start() est idempotent — sans danger si WSShell est rebuild.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      GpsService().start().catchError((e) {
+        debugPrint('[WSShell] GPS start failed: $e');
+      });
+    });
   }
 
   @override

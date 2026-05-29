@@ -23,6 +23,7 @@ import 'map_viewport.dart';
 ///   - la position GPS de l'utilisateur
 ///   - le routage des taps vers le module actif
 ///   - le pipeline d'overlays
+///   - le bandeau d'avertissement GPS (permission refusée / GPS éteint)
 class WSMapScreen extends StatefulWidget {
   final ModuleId activeModule;
   final List<MapModuleOverlay> overlays;
@@ -82,7 +83,6 @@ class _WSMapScreenState extends State<WSMapScreen> {
     super.dispose();
   }
 
-  /// Désabonne l'ancien overlay actif et abonne le nouveau.
   void _refreshListenedOverlay() {
     final next = _findActiveOverlay();
     if (identical(next, _listenedActiveOverlay)) return;
@@ -127,9 +127,6 @@ class _WSMapScreenState extends State<WSMapScreen> {
     active?.onMapLongPress(context, tapPos, latLng);
   }
 
-  /// Pousse les bounds visibles dans le singleton MapViewport pour que les
-  /// layers/overlays intéressés s'y abonnent. Appelé à chaque event de
-  /// mouvement de carte (pan, zoom, rendu initial).
   void _onMapEvent(MapEvent event) {
     final cam = event.camera;
     MapViewport().update(
@@ -138,12 +135,8 @@ class _WSMapScreenState extends State<WSMapScreen> {
     );
   }
 
-  /// Convertit une position pixel (locale au widget de la carte) en LatLng
-  /// via le MapController. Renvoie null si la carte n'est pas encore prête.
   LatLng? _pixelToLatLng(Offset pixel) {
     try {
-      // flutter_map 7.x : pointToLatLng prend un Point<num> de dart:math.
-      // (v8+ prend un Offset, mais on est sur v7.)
       return _mapCtrl.camera.pointToLatLng(Point(pixel.dx, pixel.dy));
     } catch (_) {
       return null;
@@ -153,8 +146,6 @@ class _WSMapScreenState extends State<WSMapScreen> {
   @override
   Widget build(BuildContext context) {
     final mapLayers = <Widget>[
-      // Fond de carte topographique avec cache disque persistant.
-      // Les tuiles téléchargées restent dispo offline (cf. CachedTileProvider).
       TileLayer(
         urlTemplate: 'https://tile.opentopomap.org/{z}/{x}/{y}.png',
         userAgentPackageName: 'app.whitesilence',
@@ -163,12 +154,10 @@ class _WSMapScreenState extends State<WSMapScreen> {
       ),
     ];
 
-    // Empilement des overlays — uniquement les modules activés
     for (final overlay in widget.overlays) {
       mapLayers.addAll(overlay.buildMapLayers(context));
     }
 
-    // Position de l'utilisateur — toujours par dessus
     if (_gps.lastLatLng != null) {
       mapLayers.add(_userPositionLayer(_gps.lastLatLng!));
     }
@@ -180,20 +169,24 @@ class _WSMapScreenState extends State<WSMapScreen> {
     final dragHandler   = activeOverlay?.dragHandler;
     final isDragging    = dragHandler != null;
 
-    // Si l'overlay actif fournit des options custom, on les prend ;
-    // sinon, si on est en mode drag, on désactive les gestes carte ;
-    // sinon, options par défaut (carte figée au nord).
     final interactionOpts = activeOverlay?.interactionOptions
         ?? (isDragging
             ? _drawModeInteractionOptions
             : _defaultInteractionOptions);
+
+    // Hauteur du bandeau du haut (status bar + padding + row + éventuel topChrome)
+    // pour positionner le bandeau GPS juste en dessous sans overlap.
+    final statusBarHeight = MediaQuery.of(context).padding.top;
+    final topBarHeight = statusBarHeight + WSSpacing.sm + 40; // row height = 40
+    final topChromeExtra = topChrome != null ? WSSpacing.sm + 48.0 : 0.0;
+    final gpsBannerTop = topBarHeight + topChromeExtra + WSSpacing.sm;
 
     return Stack(
       children: [
         FlutterMap(
           mapController: _mapCtrl,
           options: MapOptions(
-            initialCenter: const LatLng(45.92, 6.87), // Chamonix par défaut
+            initialCenter: const LatLng(45.92, 6.87),
             initialZoom: 13,
             minZoom: 5,
             maxZoom: 17,
@@ -205,10 +198,6 @@ class _WSMapScreenState extends State<WSMapScreen> {
           children: mapLayers,
         ),
 
-        // GestureDetector de dessin — superposé à la carte UNIQUEMENT quand
-        // un overlay actif fournit un dragHandler. La carte sous-jacente a
-        // ses gestes désactivés via _drawModeInteractionOptions, donc pas
-        // de conflit pan/drag.
         if (isDragging)
           Positioned.fill(
             child: _DragCanvas(
@@ -227,17 +216,9 @@ class _WSMapScreenState extends State<WSMapScreen> {
             ),
           ),
 
-        // Bandeau du haut : logo WS à gauche, chip module au centre,
-        // bouton GPS à droite. Tous alignés verticalement sur la même ligne
-        // (sous la status bar). Plus lisible que d'avoir le bouton GPS qui
-        // flotte plus bas où il se confond avec la carto topo.
-        //
-        // Juste en dessous, on insère le `topChrome` éventuel du module
-        // actif (ex: slider d'heure pour Conditions). Permet à un module
-        // d'avoir des contrôles toujours visibles, séparés de l'action
-        // panel du bas.
+        // Bandeau du haut : logo + chip module + bouton GPS
         Positioned(
-          top: MediaQuery.of(context).padding.top + WSSpacing.sm,
+          top: statusBarHeight + WSSpacing.sm,
           left: WSSpacing.md,
           right: WSSpacing.md,
           child: Column(
@@ -269,9 +250,29 @@ class _WSMapScreenState extends State<WSMapScreen> {
           ),
         ),
 
-        // Boussole (statique pour l'instant — la carte est figée au nord).
-        // On la positionne au-dessus de la zone bottomSheet+actionPanel,
-        // donc on lui réserve une marge conservatrice.
+        // ── Bandeau GPS ──────────────────────────────────────────────────────
+        //
+        // Affiché uniquement quand la permission est refusée définitivement
+        // (permanentlyDenied) ou quand le GPS système est éteint.
+        // Dans les deux cas, un bouton oriente l'utilisateur vers les Réglages.
+        //
+        // Cas typique : bêta-testeur qui avait l'ancienne version bugguée,
+        // le dialogue n'a jamais été affiché, Android a enregistré un refus
+        // implicite → permanentlyDenied. Il ne peut pas débloquer autrement
+        // que depuis les Réglages Android.
+        if (_gps.isPermissionDeniedForever || _gps.serviceDisabled)
+          Positioned(
+            top: gpsBannerTop,
+            left: WSSpacing.md,
+            right: WSSpacing.md,
+            child: _GpsBanner(
+              isDeniedForever: _gps.isPermissionDeniedForever,
+              onOpenSettings: _gps.isPermissionDeniedForever
+                  ? () => _gps.openAppSettings()
+                  : () => _gps.openLocationSettings(),
+            ),
+          ),
+
         Positioned(
           bottom: actionPanel != null
               ? (bottomSheet != null ? 280 : 96)
@@ -280,8 +281,6 @@ class _WSMapScreenState extends State<WSMapScreen> {
           child: const _Compass(),
         ),
 
-        // Zone du bas : carousel (bottom sheet du module) au-dessus +
-        // action panel en bas, dans une Column unique.
         if (actionPanel != null || bottomSheet != null)
           Positioned(
             bottom: WSSpacing.md,
@@ -315,6 +314,94 @@ class _WSMapScreenState extends State<WSMapScreen> {
   }
 }
 
+// ── Bandeau GPS ──────────────────────────────────────────────────────────────
+
+/// Bandeau d'avertissement affiché quand le GPS est inaccessible.
+/// Deux cas distincts avec des messages et actions différents :
+///   - [isDeniedForever] : permission refusée définitivement par Android.
+///     → bouton "Autoriser" ouvre les réglages de l'app.
+///   - GPS système éteint (serviceDisabled dans GpsService).
+///     → bouton "Activer" ouvre les réglages de localisation système.
+class _GpsBanner extends StatelessWidget {
+  final bool isDeniedForever;
+  final VoidCallback onOpenSettings;
+
+  const _GpsBanner({
+    required this.isDeniedForever,
+    required this.onOpenSettings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final message = isDeniedForever
+        ? 'Position GPS non autorisée'
+        : 'GPS désactivé sur ce téléphone';
+    final buttonLabel = isDeniedForever ? 'Autoriser' : 'Activer';
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: WSSpacing.md,
+          vertical: WSSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: WSColors.slateDark.withOpacity(0.92),
+          borderRadius: BorderRadius.circular(WSRadius.md),
+          border: Border.all(
+            color: WSColors.avalancheRed.withOpacity(0.6),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.location_off,
+              size: 18,
+              color: WSColors.avalancheRed,
+            ),
+            const SizedBox(width: WSSpacing.sm),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: WSColors.snowWhite,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            const SizedBox(width: WSSpacing.sm),
+            GestureDetector(
+              onTap: onOpenSettings,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: WSSpacing.md,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: WSColors.glacierBlue,
+                  borderRadius: BorderRadius.circular(WSRadius.sm),
+                ),
+                child: Text(
+                  buttonLabel,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: WSColors.snowWhite,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Widgets existants inchangés ──────────────────────────────────────────────
+
 class _UserPositionDot extends StatelessWidget {
   const _UserPositionDot();
   @override
@@ -339,8 +426,6 @@ class _UserPositionDot extends StatelessWidget {
   }
 }
 
-/// Logo WhiteSilence (montagne + monogramme WS) en haut à gauche de la carte.
-/// Affiche l'identité de l'app, et tap → ouvre les Réglages (raccourci utile).
 class _LogoBadge extends StatelessWidget {
   const _LogoBadge();
 
@@ -351,8 +436,6 @@ class _LogoBadge extends StatelessWidget {
       borderRadius: BorderRadius.circular(WSRadius.md),
       child: InkWell(
         onTap: () {
-          // Tap sur le logo → ouvre les Réglages (raccourci utile depuis n'importe
-          // où dans l'app).
           Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const SettingsScreen()),
           );
@@ -414,10 +497,6 @@ class _TopChip extends StatelessWidget {
   }
 }
 
-/// Bouton compact aligné avec le _LogoBadge et le _TopChip dans le bandeau
-/// du haut. Hauteur 40dp (identique au logo : padding vertical 6 +
-/// contenu 28). Plus opaque qu'un bouton flottant carte pour rester
-/// lisible sur fond topo coloré.
 class _TopBarButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
@@ -479,10 +558,6 @@ class _MapButton extends StatelessWidget {
   }
 }
 
-/// Boussole minimaliste — flèche rouge vers le Nord, "N" sur fond clair.
-/// Statique pour l'instant : la carte étant bloquée au nord, elle pointe
-/// toujours vers le haut. Plus tard on pourra la lier au cap GPS via le
-/// magnétomètre pour qu'elle tourne avec l'orientation du téléphone.
 class _Compass extends StatelessWidget {
   const _Compass();
 
@@ -507,7 +582,6 @@ class _CompassPainter extends CustomPainter {
     final cx = size.width / 2;
     final cy = size.height / 2;
 
-    // Aiguille rouge (pointe vers le nord = haut)
     final needleNorth = ui.Path()
       ..moveTo(cx, cy - 13)
       ..lineTo(cx - 4, cy)
@@ -518,7 +592,6 @@ class _CompassPainter extends CustomPainter {
       Paint()..color = WSColors.avalancheRed..style = PaintingStyle.fill,
     );
 
-    // Aiguille grise (pointe vers le sud = bas)
     final needleSouth = ui.Path()
       ..moveTo(cx, cy + 13)
       ..lineTo(cx - 4, cy)
@@ -529,14 +602,12 @@ class _CompassPainter extends CustomPainter {
       Paint()..color = WSColors.stoneGray..style = PaintingStyle.fill,
     );
 
-    // Point central
     canvas.drawCircle(
       Offset(cx, cy),
       1.6,
       Paint()..color = WSColors.slateDark,
     );
 
-    // Lettre "N" tout en haut, petite, discrète
     final tp = TextPainter(
       text: const TextSpan(
         text: 'N',
@@ -556,9 +627,6 @@ class _CompassPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter old) => false;
 }
 
-/// Widget transparent superposé à la carte qui capte les pan events.
-/// Utilisé en mode "dessin" (bbox, polygone…) — la carte sous-jacente a ses
-/// gestes désactivés via _drawModeInteractionOptions, donc on capte tout ici.
 class _DragCanvas extends StatelessWidget {
   final void Function(Offset) onStart;
   final void Function(Offset) onUpdate;
@@ -577,8 +645,6 @@ class _DragCanvas extends StatelessWidget {
       onPanStart:  (d) => onStart(d.localPosition),
       onPanUpdate: (d) => onUpdate(d.localPosition),
       onPanEnd:    (d) => onEnd(d.localPosition),
-      // Tap sans drag = on note juste le point comme début ET fin pour ne pas
-      // rester en état "drag started but never finished".
       onTapDown:   (d) => onStart(d.localPosition),
       onTapUp:     (d) => onEnd(d.localPosition),
       child: const SizedBox.expand(),
