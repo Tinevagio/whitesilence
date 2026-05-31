@@ -6,10 +6,21 @@
 //   - l'enregistrement d'observations vocales (bouton micro)
 //   - la persistance immédiate (audio + GPS, AVANT le traitement IA)
 //   - le pipeline batch (transcription + IA + upload Supabase)
+//   - l'upload direct des obs rapides (sans pipeline IA)
 //   - le chargement des obs existantes pour les afficher sur la carte
 //   - le partage communautaire opt-in/out
 //
 // Le wake word n'est PAS démarré ici (cf. Phase 5).
+//
+// ── Deux chemins d'upload ────────────────────────────────────────────────────
+//
+// processPending() : pour les obs VOCALES uniquement.
+//   → charge les obs pending, lance Whisper+IA sur celles qui ont un audioPath,
+//     puis upload Supabase. Ne doit pas être appelé depuis une obs rapide.
+//
+// uploadQuickObservation(obs) : pour les obs RAPIDES uniquement.
+//   → upload Supabase direct si shareWithCommunity et obs.isEnriched.
+//     Pas de Whisper, pas d'IA. Ne touche pas aux obs vocales en attente.
 
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -21,6 +32,7 @@ import '../../core/audio/sound_service.dart';
 import '../../core/gps/gps_service.dart';
 import 'models/observation.dart';
 import 'services/processing_service.dart';
+import 'services/supabase_service.dart';
 import 'services/wake_word_service.dart';
 import 'snow_dao.dart';
 
@@ -36,13 +48,14 @@ class SnowController extends ChangeNotifier {
   factory SnowController() => _instance;
   SnowController._();
 
-  final RecordingService _recording = RecordingService();
-  final SoundService     _sound     = SoundService();
-  final GpsService       _gps       = GpsService();
-  final SnowDao          _dao       = SnowDao();
-  final ProcessingService _processing = ProcessingService();
+  final RecordingService  _recording   = RecordingService();
+  final SoundService      _sound       = SoundService();
+  final GpsService        _gps         = GpsService();
+  final SnowDao           _dao         = SnowDao();
+  final ProcessingService _processing  = ProcessingService();
+  final SupabaseService   _supabase    = SupabaseService();
 
-  // ── État ─────────────────────────────────────────────────────────────────
+  // ── État ──────────────────────────────────────────────────────────────────
   SnowStatus _status = SnowStatus.idle;
   SnowStatus get status => _status;
 
@@ -60,7 +73,7 @@ class SnowController extends ChangeNotifier {
   int get progressCurrent => _progressCurrent;
   int get progressTotal   => _progressTotal;
 
-  // ── Préférence partage communautaire ─────────────────────────────────────
+  // ── Préférence partage communautaire ──────────────────────────────────────
   bool _shareWithCommunity = true;
   bool get shareWithCommunity => _shareWithCommunity;
 
@@ -71,40 +84,19 @@ class SnowController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Mode mains-libres (wake word) ────────────────────────────────────────
-  // Activable depuis le toggle "Activer mains libres" de l'action panel.
-  // Quand actif, le micro tourne en permanence pour détecter "hey snowy" /
-  // "bye bye snowy". CPU et batterie sont consommés en continu — c'est
-  // pour ça qu'on en fait un toggle explicite plutôt qu'une activation
-  // automatique.
-  //
-  // Si le code natif Android n'est pas en place (cf. android_patch_phase5),
-  // le service WakeWordService.init() retourne false et le toggle reste
-  // visible mais inerte — l'app continue de fonctionner normalement avec
-  // le bouton micro classique.
+  // ── Mode mains-libres (wake word) ─────────────────────────────────────────
   final WakeWordService _wakeWord = WakeWordService();
   bool _handsFreeEnabled = false;
   bool _wakeWordReady = false;
 
-  /// True si l'utilisateur a activé le toggle mains-libres et que le micro
-  /// écoute pour le wake word.
   bool get handsFreeEnabled => _handsFreeEnabled;
-
-  /// True si le moteur natif est disponible (code Kotlin + ONNX en place).
-  /// Quand false, le toggle dans l'UI doit être désactivé/grisé.
   bool get wakeWordReady => _wakeWordReady;
 
-  /// Active le mode mains-libres. Initialise le moteur natif au premier appel.
-  /// Retourne false si l'init a échoué (pas de moteur natif, permission micro
-  /// refusée, etc.) ; dans ce cas le toggle UI doit revenir à off.
   Future<bool> enableHandsFree() async {
     if (_handsFreeEnabled) return true;
 
-    // S'assure que le micro a la permission (pour quand le wake word
-    // détectera et qu'on devra démarrer l'enregistrement immédiatement)
     final micResult = await _recording.init();
     if (micResult != RecordingInitResult.ok) {
-      // Message adapté au type de refus pour orienter l'utilisateur.
       _statusMessage = micResult ==
               RecordingInitResult.permissionPermanentlyDenied
           ? 'Permission micro refusée — ouvre les Réglages Android'
@@ -113,7 +105,6 @@ class SnowController extends ChangeNotifier {
       return false;
     }
 
-    // Init du moteur natif si pas déjà fait
     if (!_wakeWordReady) {
       _wakeWordReady = await _wakeWord.init();
       if (!_wakeWordReady) {
@@ -123,7 +114,6 @@ class SnowController extends ChangeNotifier {
       }
     }
 
-    // Branche les callbacks
     _wakeWord.onWakeWord = _onWakeWordDetected;
     _wakeWord.onStopWord = _onStopWordDetected;
 
@@ -132,13 +122,11 @@ class SnowController extends ChangeNotifier {
     _statusMessage = 'Mains libres actif — dis "hey snowy" pour enregistrer';
     notifyListeners();
 
-    // Persistance pour rétablir au prochain démarrage
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('snow.handsFreeEnabled', true);
     return true;
   }
 
-  /// Désactive le mode mains-libres. Le micro s'arrête, plus de détection.
   Future<void> disableHandsFree() async {
     if (!_handsFreeEnabled) return;
     await _wakeWord.stopListening();
@@ -152,79 +140,48 @@ class SnowController extends ChangeNotifier {
 
   void _onWakeWordDetected() {
     debugPrint('[snow] wake word détecté → démarre obs');
-    // Ne déclenche que si on n'enregistre pas déjà — évite les doublons
-    if (_status == SnowStatus.idle) {
-      startRecording();
-    }
+    if (_status == SnowStatus.idle) startRecording();
   }
 
   void _onStopWordDetected() {
     debugPrint('[snow] stop word détecté → arrête obs');
-    if (_status == SnowStatus.recording) {
-      stopRecording();
-    }
+    if (_status == SnowStatus.recording) stopRecording();
   }
 
-  // ── Timer auto-stop (sécurité 15s comme Hey Snowy) ───────────────────────
+  // ── Timer auto-stop ───────────────────────────────────────────────────────
   Timer? _autoStopTimer;
   static const _maxRecordingDuration = Duration(seconds: 15);
 
-  // ── Démarrage ────────────────────────────────────────────────────────────
+  // ── Démarrage ─────────────────────────────────────────────────────────────
 
   bool _started = false;
   Future<void> start() async {
     if (_started) return;
     _started = true;
 
-    // Charge la préférence "partage communautaire"
     final prefs = await SharedPreferences.getInstance();
     _shareWithCommunity = prefs.getBool('snow.shareWithCommunity') ?? true;
 
-    // Initialise les sons (génère les bips au premier lancement)
     await _sound.init();
-
-    // Charge les obs locales pour affichage immédiat des pins.
     await refreshObservations();
 
-    // Filet de sécurité : lance un processPending() en arrière-plan pour
-    // uploader vers Supabase toute obs qui aurait `uploaded = false` (création
-    // hors-ligne, app crash entre save et upload, obs rapide créée sans avoir
-    // déclenché Whisper/IA, etc.). Sans ça, des obs peuvent rester locales
-    // indéfiniment et ne jamais être partagées avec la communauté.
-    //
-    // Fire-and-forget : ne bloque pas le démarrage du module. Si le réseau
-    // est HS, le processPending échouera silencieusement et sera retenté
-    // au prochain démarrage de l'app.
-    //
-    // NOTE — Auparavant, ce bloc faisait `_dao.markAllAsUploaded()` pour
-    // éviter de réuploader l'historique migré depuis Hey Snowy. Mais cette
-    // approche tuait le mécanisme d'upload en attente : toute obs créée
-    // mais pas encore uploadée était marquée comme uploadée au redémarrage,
-    // donc jamais traitée. On corrige en uploadant explicitement le pending
-    // au lieu de le marquer faussement comme déjà fait.
+    // Lance processPending() au démarrage pour uploader les obs vocales
+    // qui auraient pu rester pending (crash, hors-ligne, etc.).
+    // Fire-and-forget.
     // ignore: discarded_futures
     processPending();
   }
 
-  /// Recharge les observations depuis la BDD locale.
-  ///
-  /// Depuis la fusion des modules Neige et Obs (v0.5), on charge TOUTES les
-  /// obs (`loadAll()`) et plus seulement celles des dernières 24h
-  /// (`loadSession()`). Raison : l'onglet Obs présente l'historique complet
-  /// de l'utilisateur, pas la "session du jour".
   Future<void> refreshObservations() async {
     _observations = await _dao.loadAll();
     notifyListeners();
   }
 
-  // ── Enregistrement ───────────────────────────────────────────────────────
+  // ── Enregistrement ────────────────────────────────────────────────────────
 
-  /// Démarre un enregistrement d'observation. Snap la position GPS, lance le
-  /// micro. Auto-stop après 15s (sécurité).
   Future<void> startRecording() async {
     if (_status != SnowStatus.idle) return;
 
-    // Vérifie GPS dispo
     final pos = _gps.last;
     if (pos == null) {
       _statusMessage = 'Position GPS indisponible';
@@ -232,7 +189,6 @@ class SnowController extends ChangeNotifier {
       return;
     }
 
-    // Démarre l'audio
     final audioPath = await _recording.start();
     if (audioPath == null) {
       _statusMessage = 'Micro indisponible (permission ?)';
@@ -242,9 +198,6 @@ class SnowController extends ChangeNotifier {
 
     await _sound.bipStart();
 
-    // Crée l'obs (sans transcript ni IA pour l'instant).
-    // Note geolocator : `altitude` vaut 0.0 si non disponible. On garde null
-    // dans ce cas pour distinguer "altitude inconnue" de "à l'altitude 0".
     final altitude = pos.altitude;
     final obs = Observation(
       id:        DateTime.now().millisecondsSinceEpoch.toString(),
@@ -261,15 +214,11 @@ class SnowController extends ChangeNotifier {
     _status = SnowStatus.recording;
     _statusMessage = 'Décris la neige…';
     _autoStopTimer = Timer(_maxRecordingDuration, () {
-      if (_status == SnowStatus.recording) {
-        stopRecording();
-      }
+      if (_status == SnowStatus.recording) stopRecording();
     });
     notifyListeners();
   }
 
-  /// Stoppe l'enregistrement. L'obs reste à l'état "brut" en BDD ; le
-  /// traitement IA se fait en batch via `processPending()`.
   Future<void> stopRecording() async {
     if (_status != SnowStatus.recording) return;
     _autoStopTimer?.cancel();
@@ -281,10 +230,10 @@ class SnowController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Traitement batch ─────────────────────────────────────────────────────
+  // ── Pipeline batch (obs vocales uniquement) ───────────────────────────────
 
-  /// Lance le pipeline (Whisper → IA → Supabase) sur toutes les obs non
-  /// encore traitées (pas de snowType ou pas uploadées).
+  /// Lance Whisper + IA + upload Supabase sur les obs vocales pending.
+  /// NE PAS appeler depuis une obs rapide — utiliser uploadQuickObservation().
   Future<void> processPending() async {
     if (_status != SnowStatus.idle) return;
 
@@ -321,7 +270,33 @@ class SnowController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Lecture / suppression d'obs ──────────────────────────────────────────
+  // ── Upload direct obs rapide ──────────────────────────────────────────────
+
+  /// Upload Supabase direct pour une obs rapide (sans audio).
+  /// Bypass complet du pipeline Whisper+IA — l'obs est déjà enrichie par
+  /// l'utilisateur (snowType défini). Fire-and-forget depuis le sheet.
+  Future<void> uploadQuickObservation(Observation obs) async {
+    if (!_shareWithCommunity) {
+      debugPrint('[snow] uploadQuickObservation: partage désactivé, skip');
+      return;
+    }
+    if (!obs.isEnriched) {
+      debugPrint('[snow] uploadQuickObservation: obs non enrichie, skip');
+      return;
+    }
+    debugPrint('[snow] uploadQuickObservation: upload direct Supabase');
+    final ok = await _supabase.uploadObservation(obs);
+    if (ok) {
+      obs.uploaded = true;
+      await _dao.update(obs);
+      debugPrint('[snow] uploadQuickObservation: uploadée');
+    } else {
+      debugPrint('[snow] uploadQuickObservation: échec réseau, sera retentée '
+          'au prochain processPending()');
+    }
+  }
+
+  // ── Lecture / suppression d'obs ───────────────────────────────────────────
 
   Future<void> deleteObservation(Observation obs) async {
     await _dao.delete(obs.id);
@@ -337,8 +312,6 @@ class SnowController extends ChangeNotifier {
     }
   }
 
-  /// Recentre la carte sur une obs (utilisé par review_screen).
-  /// Le module Map gère le centrage, ici on signale juste la demande.
   LatLng? _pendingFocus;
   LatLng? get pendingFocus => _pendingFocus;
   void requestFocusOn(LatLng latLng) {

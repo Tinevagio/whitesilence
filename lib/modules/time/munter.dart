@@ -1,21 +1,29 @@
 // lib/modules/time/munter.dart
 //
 // Modèle de vitesse Munter adaptatif.
-// Migré depuis TimeToGo (lib/munter.dart) sans modification du modèle métier.
 //
-// Différences :
-//   - Les enums Activity/Level locaux sont ré-exposés par compatibilité,
-//     mais l'app expose un seul UserProfile global dans shared/settings/.
-//     Voir `profile_adapter.dart` pour la conversion.
-//
-// Munter classique (à pied, conditions normales) :
+// Munter classique :
 //   UM = dist_km / vitesse_kmh + d_plus / 300 + d_minus / 500
 //
 // Ici on calcule le TEMPS pour un segment (distance horizontale + dénivelé),
 // et on calibre les dénominateurs selon le profil utilisateur + le rythme
 // mesuré sur le terrain.
-
-// ─── Profil utilisateur (local au module Munter) ──────────────────────────────
+//
+// ── Corrections v2 ──────────────────────────────────────────────────────────
+//
+// 1. Plafond calibration : 80% → 95%.
+//    L'ancien plafond à 80% bloquait définitivement à "80%" dans l'UI,
+//    peu importe la durée de sortie. On monte à 95% (garder 5% du baseline
+//    suffit pour éviter les dérives sur des mesures aberrantes).
+//
+// 2. Calcul ascent rate corrigé dans _recalibrate().
+//    Avant : gainTime = temps total des segments qui montaient, y compris
+//    le temps passé en plat/descente sur ces segments → taux systématiquement
+//    sous-estimé → estimations de montée trop longues.
+//    Après : on estime la fraction de temps vraiment passée en montée via
+//    le ratio (elevGain / distM) × durationS, ce qui donne un taux réaliste.
+//
+// 3. Calcul descent rate corrigé de la même façon.
 
 enum MunterActivity { hiking, skiTouring, trail }
 enum MunterFitness { beginner, trained, warrior }
@@ -32,13 +40,8 @@ class MunterProfile {
     required this.terrain,
   });
 
-  /// Signature compacte du profil — utilisée pour invalider la persistance
-  /// quand le profil change (les mesures précédentes ne sont plus pertinentes
-  /// pour un nouveau baseline).
   String get signature => '${activity.name}/${fitness.name}/${terrain.name}';
 }
-
-// ─── Paramètres Munter ────────────────────────────────────────────────────────
 
 class MunterParams {
   final double horizontalSpeed; // km/h
@@ -104,18 +107,10 @@ class MunterEngine {
 
   MunterEngine(this.profile) : _params = _resolveBaseParams(profile);
 
-  MunterParams get currentParams      => _params;
-  double       get calibrationWeight  => _calibrationWeight;
-  bool         get isCalibrated       => _calibrationWeight >= 0.5;
+  MunterParams get currentParams     => _params;
+  double       get calibrationWeight => _calibrationWeight;
+  bool         get isCalibrated      => _calibrationWeight >= 0.5;
 
-  /// Estime le temps en secondes pour un segment.
-  ///
-  /// Formule : t = MAX( dist_km / v_horiz,  D+/ascentRate + D-/descentRate )
-  ///
-  /// La contrainte dominante dicte le temps. D+ et D- s'additionnent entre
-  /// eux (montée + descente sur le même pas coûtent les deux) mais on prend
-  /// le MAX avec l'horizontal. Sur terrain plat → la vitesse horiz dicte.
-  /// Sur pente raide → le dénivelé dicte.
   double estimateSeconds({
     required double distanceM,
     required double elevGain,
@@ -130,14 +125,13 @@ class MunterEngine {
     return tBase * factor * 3600;
   }
 
-  /// Distance horizontale max dans [budgetSeconds] sur terrain plat.
   double maxHorizontalDistance(double budgetSeconds) {
     final budgetH = budgetSeconds / 3600.0;
     final factor  = _terrainFactor[profile.terrain]!;
     return (_params.horizontalSpeed * budgetH / factor) * 1000.0;
   }
 
-  // ── Calibration ──────────────────────────────────────────────────────────
+  // ── Calibration ────────────────────────────────────────────────────────────
 
   void addGpsMeasurement({
     required double distanceM,
@@ -152,10 +146,6 @@ class MunterEngine {
       elevLoss:      elevLoss,
       actualSeconds: actualSeconds,
     ));
-    // Garder uniquement les 20 dernières mesures (sliding window = fenêtre
-    // de calibration). Évite l'accumulation infinie en RAM et garde la
-    // calibration "fraîche" (n'inclut pas des mesures vieilles de plusieurs
-    // sorties qui ne sont plus représentatives).
     if (_measurements.length > 20) {
       _measurements.removeRange(0, _measurements.length - 20);
     }
@@ -169,40 +159,54 @@ class MunterEngine {
         ? _measurements.sublist(_measurements.length - 20)
         : _measurements;
 
-    double totalDist = 0, totalGain = 0, totalLoss = 0, totalTime = 0;
+    // ── Vitesse horizontale ─────────────────────────────────────────────────
+    double totalDist = 0, totalTime = 0;
     for (final m in window) {
       totalDist += m.distanceM;
-      totalGain += m.elevGain;
-      totalLoss += m.elevLoss;
       totalTime += m.actualSeconds;
     }
-
     if (totalDist < 50 || totalTime < 30) return;
-
     final measuredHSpeed = (totalDist / 1000.0) / (totalTime / 3600.0);
 
-    double gainTime = 0, gainDist = 0;
+    // ── Taux de montée ───────────────────────────────────────────────────────
+    //
+    // Correction v2 : on n'accumule plus le temps TOTAL des segments qui
+    // montent. Sur un segment de 60s qui monte 20m sur 200m de distance
+    // horizontale, le randonneur a passé ~20/200 = 10% du temps en montée
+    // pure, soit ~6s. Accumuler 60s gonflait artificiellement gainTime et
+    // sous-estimait le taux de montée.
+    //
+    // Nouvelle approche : on estime le temps de montée par proportionnalité
+    // (elevGain / distM) × durationS. Hypothèse : la vitesse est constante
+    // sur le segment — bonne approximation pour des segments courts (60s).
+    double gainTimeSec = 0, gainM = 0;
     for (final m in window) {
-      if (m.elevGain > 2) {
-        gainTime += m.actualSeconds;
-        gainDist += m.elevGain;
+      if (m.elevGain > 2 && m.distanceM > 0) {
+        // Fraction du segment passée en montée
+        final upFraction = (m.elevGain / m.distanceM).clamp(0.0, 1.0);
+        gainTimeSec += m.actualSeconds * upFraction;
+        gainM       += m.elevGain;
       }
     }
-    final measuredAscentRate = gainTime > 0
-        ? gainDist / (gainTime / 3600.0)
+    final measuredAscentRate = gainTimeSec > 0
+        ? gainM / (gainTimeSec / 3600.0)
         : _params.ascentRate;
 
-    double lossTime = 0, lossDist = 0;
+    // ── Taux de descente ─────────────────────────────────────────────────────
+    // Même correction que pour la montée.
+    double lossTimeSec = 0, lossM = 0;
     for (final m in window) {
-      if (m.elevLoss > 2) {
-        lossTime += m.actualSeconds;
-        lossDist += m.elevLoss;
+      if (m.elevLoss > 2 && m.distanceM > 0) {
+        final downFraction = (m.elevLoss / m.distanceM).clamp(0.0, 1.0);
+        lossTimeSec += m.actualSeconds * downFraction;
+        lossM       += m.elevLoss;
       }
     }
-    final measuredDescentRate = lossTime > 0
-        ? lossDist / (lossTime / 3600.0)
+    final measuredDescentRate = lossTimeSec > 0
+        ? lossM / (lossTimeSec / 3600.0)
         : _params.descentRate;
 
+    // ── Sanity checks ────────────────────────────────────────────────────────
     if (measuredHSpeed     < 0.5 || measuredHSpeed     > 20)   return;
     if (measuredAscentRate < 50  || measuredAscentRate > 1500) return;
 
@@ -212,9 +216,14 @@ class MunterEngine {
       descentRate:     measuredDescentRate,
     );
 
-    // Poids progressif : 0 à 0 min → 50% à 25 min → 80% à 40 min (plafond)
+    // ── Poids progressif ─────────────────────────────────────────────────────
+    //
+    // Correction v2 : plafond relevé de 80% à 95%.
+    // L'ancien plafond bloquait l'UI à "80%" en permanence après ~40 min
+    // de sortie, ce qui était frustrant et trompeur.
+    // On garde 5% du baseline pour amortir les mesures aberrantes.
     final totalMinutes = totalTime / 60.0;
-    _calibrationWeight = (totalMinutes / 50.0).clamp(0.0, 0.80);
+    _calibrationWeight = (totalMinutes / 50.0).clamp(0.0, 0.95);
 
     final baseline = _resolveBaseParams(profile);
     _params = baseline.blend(measured, _calibrationWeight);
@@ -225,38 +234,26 @@ class MunterEngine {
   }
 
   Map<String, dynamic> calibrationReport() => {
-    'weight':           '${(_calibrationWeight * 100).toStringAsFixed(0)}%',
-    'isCalibrated':     isCalibrated,
-    'measurements':     _measurements.length,
-    'horizontalSpeed':  _params.horizontalSpeed.toStringAsFixed(2),
-    'ascentRate':       _params.ascentRate.toStringAsFixed(0),
-    'descentRate':      _params.descentRate.toStringAsFixed(0),
+    'weight':          '${(_calibrationWeight * 100).toStringAsFixed(0)}%',
+    'isCalibrated':    isCalibrated,
+    'measurements':    _measurements.length,
+    'horizontalSpeed': _params.horizontalSpeed.toStringAsFixed(2),
+    'ascentRate':      _params.ascentRate.toStringAsFixed(0),
+    'descentRate':     _params.descentRate.toStringAsFixed(0),
   };
 
-  // ── Persistance ─────────────────────────────────────────────────────────
-  //
-  // Snapshot = signature profil + mesures GPS récentes. La signature permet
-  // de jeter la persistance quand l'utilisateur change de profil (différents
-  // baselines → mesures non comparables).
-  //
-  // Les params calibrés (`_params`) ne sont PAS sauvés directement : ils sont
-  // recalculés depuis les mesures + baseline. Ça évite les incohérences entre
-  // params stockés et baseline courante.
+  // ── Persistance ────────────────────────────────────────────────────────────
 
-  /// Snapshot pour persistance. Inclut la signature du profil.
   Map<String, dynamic> toSnapshot() => {
-    'profile':     profile.signature,
+    'profile':      profile.signature,
     'measurements': _measurements.map((m) => {
-      'd':  m.distanceM,
-      'g':  m.elevGain,
-      'l':  m.elevLoss,
-      's':  m.actualSeconds,
+      'd': m.distanceM,
+      'g': m.elevGain,
+      'l': m.elevLoss,
+      's': m.actualSeconds,
     }).toList(),
   };
 
-  /// Recharge les mesures depuis un snapshot précédent et recalibre.
-  /// Retourne `true` si la restauration a eu lieu (profil compatible),
-  /// `false` sinon (signature différente → snapshot ignoré).
   bool restoreFromSnapshot(Map<String, dynamic> snapshot) {
     final sig = snapshot['profile'] as String?;
     if (sig == null || sig != profile.signature) return false;

@@ -7,6 +7,7 @@ import io.flutter.plugin.common.MethodChannel
 import com.rementia.openwakeword.lib.WakeWordEngine
 import com.rementia.openwakeword.lib.model.WakeWordModel
 import com.rementia.openwakeword.lib.ParallelWakeWordEngine
+import android.content.Intent
 import kotlinx.coroutines.*
 
 /**
@@ -31,7 +32,8 @@ import kotlinx.coroutines.*
  */
 class MainActivity : FlutterActivity() {
 
-    private val METHOD_CHANNEL = "hey_snowy/wake_word"
+    private val METHOD_CHANNEL      = "hey_snowy/wake_word"
+    private val GPS_SERVICE_CHANNEL = "gps_foreground_service/control"
     private val EVENT_CHANNEL  = "hey_snowy/wake_word_events"
 
     private var engine: ParallelWakeWordEngine? = null
@@ -108,6 +110,27 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // ── Foreground Service GPS ─────────────────────────────────────────
+        // Reçoit les commandes "start" et "stop" de GpsService.dart pour
+        // démarrer/arrêter GpsForegroundService en fonction du cycle de vie
+        // de l'app (paused/resumed).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, GPS_SERVICE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        val intent = Intent(this, GpsForegroundService::class.java)
+                        startForegroundService(intent)
+                        result.success(null)
+                    }
+                    "stop" -> {
+                        val intent = Intent(this, GpsForegroundService::class.java)
+                        stopService(intent)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, sink: EventChannel.EventSink?) {
@@ -125,3 +148,4 @@ class MainActivity : FlutterActivity() {
         engine?.release()
     }
 }
+

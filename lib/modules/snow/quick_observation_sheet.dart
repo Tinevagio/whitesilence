@@ -11,6 +11,16 @@
 // via le détail de l'obs (tap sur le pin).
 //
 // Si pas de position GPS → on bloque l'enregistrement avec un message clair.
+//
+// ── Pipeline IA bypassé ──────────────────────────────────────────────────────
+//
+// Une obs rapide N'A PAS d'audio : pas besoin de Whisper, pas besoin de l'IA.
+// On appelait processPending() ici, ce qui était une erreur : processPending()
+// charge TOUTES les obs pending, y compris les obs vocales, et lance Whisper+IA
+// sur elles — alors qu'on voulait juste uploader une obs rapide déjà enrichie.
+//
+// Fix : on appelle SnowController().uploadQuickObservation(obs) qui fait
+// l'upload Supabase directement, sans toucher aux obs vocales en attente.
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -42,7 +52,6 @@ class QuickObservationSheet extends StatefulWidget {
 }
 
 class _QuickObservationSheetState extends State<QuickObservationSheet> {
-  // Ordre cohérent avec la fréquence d'usage typique en ski de rando.
   static const _types = <String>[
     SnowTypes.poudre,
     SnowTypes.moquette,
@@ -82,7 +91,6 @@ class _QuickObservationSheetState extends State<QuickObservationSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Petit handle
               Center(
                 child: Container(
                   width: 40, height: 4,
@@ -103,12 +111,10 @@ class _QuickObservationSheetState extends State<QuickObservationSheet> {
 
               const SizedBox(height: WSSpacing.lg),
 
-              // ─── Position GPS ───────────────────────────────────────────
               _PositionBlock(position: pos),
 
               const SizedBox(height: WSSpacing.lg),
 
-              // ─── Sélection du type ──────────────────────────────────────
               Text(
                 'Type de neige',
                 style: WSText.heading.copyWith(fontSize: 16),
@@ -130,7 +136,6 @@ class _QuickObservationSheetState extends State<QuickObservationSheet> {
 
               const SizedBox(height: WSSpacing.xl),
 
-              // ─── Boutons ────────────────────────────────────────────────
               Row(
                 children: [
                   Expanded(
@@ -207,40 +212,36 @@ class _QuickObservationSheetState extends State<QuickObservationSheet> {
     );
   }
 
-  // ─── Sauvegarde ─────────────────────────────────────────────────────────
-
   Future<void> _save(Position pos) async {
     if (_selectedType == null) return;
     setState(() => _saving = true);
 
     final obs = Observation(
-      // Même format d'id que SnowController.startRecording : timestamp pur,
-      // pour rester cohérent avec ce qui est uploadé sur Supabase.
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       lat: pos.latitude,
       lon: pos.longitude,
       altitudeM: pos.altitude,
       timestamp: DateTime.now(),
-      audioPath: '', // pas d'audio pour une obs rapide
+      audioPath: '',
       snowType: _selectedType,
-      // depthCm, stabilityScore, aspect, rawNotes : null → éditables ensuite
       uploaded: false,
     );
 
     try {
       await SnowDao().save(obs);
-      // Notifier le controller pour rafraîchir la liste affichée
       await SnowController().refreshObservations();
 
-      // ── Upload Supabase en arrière-plan ──────────────────────────────
-      // L'obs rapide est déjà enrichie (snowType défini par l'utilisateur),
-      // donc processPending() la passera direct à Supabase sans Whisper/IA.
+      // ── Upload direct, sans pipeline IA ──────────────────────────────────
+      //
+      // On N'appelle PAS processPending() ici. processPending() charge toutes
+      // les obs pending (vocales incluses) et déclencherait Whisper+IA pour
+      // rien sur une obs rapide qui n'a pas d'audio.
+      //
+      // uploadQuickObservation() fait uniquement l'upload Supabase de cette
+      // obs si shareWithCommunity est actif — sans toucher aux obs vocales.
       // Fire-and-forget : on ne bloque pas la fermeture du sheet.
-      // Si l'upload échoue (réseau HS), l'obs reste avec uploaded=false et
-      // sera retentée au prochain processPending() (ou au prochain lancement
-      // de l'app si on branche ça plus tard).
       // ignore: discarded_futures
-      SnowController().processPending();
+      SnowController().uploadQuickObservation(obs);
 
       if (mounted) Navigator.of(context).pop(obs);
     } catch (e) {
@@ -254,7 +255,7 @@ class _QuickObservationSheetState extends State<QuickObservationSheet> {
   }
 }
 
-// ─── Sous-widgets ───────────────────────────────────────────────────────────
+// ─── Sous-widgets ────────────────────────────────────────────────────────────
 
 class _PositionBlock extends StatelessWidget {
   final Position? position;

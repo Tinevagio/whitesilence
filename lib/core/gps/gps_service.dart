@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -7,38 +8,32 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 
 /// Service GPS unifié pour WhiteSilence.
 ///
-/// Un seul stream de positions, partagé entre tous les modules (time, snow,
-/// avalanche, tour). Évite les batteries vidées par plusieurs subscribers.
+/// Un seul stream de positions, partagé entre tous les modules.
 ///
-/// Philosophie WhiteSilence : pas de tracking, position en mémoire uniquement
-/// sauf si l'utilisateur enregistre explicitement une sortie ou une observation.
+/// ── GPS en arrière-plan ──────────────────────────────────────────────────────
 ///
-/// ── Gestion des permissions ─────────────────────────────────────────────────
+/// Android 8+ suspend les streams GPS quand l'app n'est plus en foreground
+/// (écran verrouillé, autre app au premier plan). Pour la calibration Munter,
+/// il faut que les positions continuent d'arriver même en veille.
 ///
-/// On utilise permission_handler (et NON geolocator) pour demander la
-/// permission GPS. La raison : permission_handler et geolocator sont tous deux
-/// du même éditeur (Baseflow) et partagent le même mécanisme de callback
-/// onRequestPermissionsResult sur Android. Si les deux sont enregistrés,
-/// permission_handler capture le résultat et geolocator ne le reçoit jamais —
-/// la permission reste bloquée en "denied" sans que le dialogue ne s'affiche.
+/// Solution : un Foreground Service Android (GpsForegroundService.kt) qui
+/// maintient le processus Flutter en vie. Ce service affiche une notification
+/// persistante "GPS actif" pendant qu'il tourne.
 ///
-/// Solution : permission_handler est la source de vérité pour TOUTES les
-/// permissions (GPS + micro). Geolocator est utilisé uniquement pour le stream
-/// de positions, jamais pour les permissions.
+/// Cycle de vie du service :
+///   - Démarre quand l'app passe en arrière-plan (AppLifecycleState.paused)
+///   - S'arrête quand l'app revient au premier plan (AppLifecycleState.resumed)
+///   - S'arrête aussi si l'utilisateur tape "Arrêter" dans la notification
+///   - S'arrête si l'utilisateur swipe l'app hors du recents
 ///
-/// ── Cycle de vie permission ──────────────────────────────────────────────────
+/// On N'utilise PAS ACCESS_BACKGROUND_LOCATION (review Google Play complexe).
+/// La permission "En cours d'utilisation seulement" suffit avec un Foreground
+/// Service déclaré avec foregroundServiceType="location".
 ///
-/// Cas classique : l'utilisateur refuse la permission deux fois → Android la
-/// passe en permanentlyDenied. Plus aucun popup système ne s'affiche.
-/// L'utilisateur doit alors aller manuellement dans les Réglages Android.
+/// ── Permissions ──────────────────────────────────────────────────────────────
 ///
-/// Quand il revient dans l'app après avoir accordé manuellement, on doit
-/// retenter start() — sinon l'app reste sans GPS jusqu'au prochain kill.
-/// C'est ce que fait _LifecycleObserver.
-///
-/// lastPermissionStatus expose le dernier état connu pour permettre à l'UI
-/// d'afficher un message clair ("Aller dans les Réglages") quand
-/// permanentlyDenied.
+/// permission_handler gère toutes les permissions (GPS + micro) pour éviter
+/// le conflit de callback Android avec geolocator (même éditeur Baseflow).
 class GpsService extends ChangeNotifier {
   static final GpsService _instance = GpsService._();
   factory GpsService() => _instance;
@@ -47,18 +42,17 @@ class GpsService extends ChangeNotifier {
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
   }
 
+  static const _channel = MethodChannel('gps_foreground_service/control');
+
   StreamSubscription<Position>? _sub;
   Position? _last;
   bool _isActive = false;
+  bool _foregroundServiceRunning = false;
   late final _LifecycleObserver _lifecycleObserver;
 
-  /// Dernier statut de permission connu. null tant que start() n'a pas
-  /// été appelé une première fois.
   ph.PermissionStatus? _lastPermissionStatus;
   ph.PermissionStatus? get lastPermissionStatus => _lastPermissionStatus;
 
-  /// Vrai si le service de localisation système (GPS du téléphone) est
-  /// désactivé — distinct du refus de permission.
   bool _serviceDisabled = false;
   bool get serviceDisabled => _serviceDisabled;
 
@@ -67,12 +61,9 @@ class GpsService extends ChangeNotifier {
       _last == null ? null : LatLng(_last!.latitude, _last!.longitude);
   bool get isActive => _isActive;
 
-  /// L'utilisateur a refusé définitivement → Android bloque les popups.
-  /// Il faut l'orienter vers les Réglages système.
   bool get isPermissionDeniedForever =>
       _lastPermissionStatus == ph.PermissionStatus.permanentlyDenied;
 
-  /// Démarre le tracking GPS. Idempotent : sans danger d'appel multiple.
   Future<void> start({
     int distanceFilterMeters = 10,
     LocationAccuracy accuracy = LocationAccuracy.best,
@@ -102,8 +93,6 @@ class GpsService extends ChangeNotifier {
       );
 
       _isActive = true;
-
-      // Position initiale (sans attendre le premier tick du stream)
       _last = await Geolocator.getLastKnownPosition();
       notifyListeners();
     } catch (e) {
@@ -117,12 +106,42 @@ class GpsService extends ChangeNotifier {
     await _sub?.cancel();
     _sub = null;
     _isActive = false;
+    await _stopForegroundService();
     notifyListeners();
   }
 
-  /// Vérifie et demande la permission via permission_handler.
-  /// permission_handler est la source de vérité unique pour les permissions
-  /// dans cette app — ne pas utiliser Geolocator.requestPermission().
+  // ── Foreground Service ────────────────────────────────────────────────────
+
+  /// Démarre le Foreground Service Android pour maintenir le GPS en veille.
+  /// Appelé quand l'app passe en arrière-plan (AppLifecycleState.paused).
+  /// Sans danger si le service est déjà lancé.
+  Future<void> startForegroundService() async {
+    if (_foregroundServiceRunning || !_isActive) return;
+    try {
+      await _channel.invokeMethod('start');
+      _foregroundServiceRunning = true;
+      debugPrint('[GPS] Foreground service démarré');
+    } catch (e) {
+      // Le service n'est pas critique — si le démarrage échoue (ex: en debug
+      // sans le service déclaré), on log et on continue sans lui.
+      debugPrint('[GPS] Foreground service non disponible: $e');
+    }
+  }
+
+  /// Arrête le Foreground Service. Appelé quand l'app revient au premier plan.
+  Future<void> _stopForegroundService() async {
+    if (!_foregroundServiceRunning) return;
+    try {
+      await _channel.invokeMethod('stop');
+      _foregroundServiceRunning = false;
+      debugPrint('[GPS] Foreground service arrêté');
+    } catch (e) {
+      debugPrint('[GPS] Erreur arrêt foreground service: $e');
+    }
+  }
+
+  // ── Permissions ───────────────────────────────────────────────────────────
+
   Future<bool> _ensurePermission() async {
     _serviceDisabled = !(await Geolocator.isLocationServiceEnabled());
     if (_serviceDisabled) {
@@ -148,32 +167,43 @@ class GpsService extends ChangeNotifier {
     return status.isGranted || status.isLimited;
   }
 
-  /// Ouvre les réglages d'app Android pour que l'utilisateur puisse
-  /// accorder manuellement la permission. À appeler depuis un bouton
-  /// "Ouvrir les Réglages" dans l'UI quand isPermissionDeniedForever.
-  Future<void> openAppSettings() async {
-    await ph.openAppSettings();
-  }
-
-  /// Ouvre les réglages système de localisation (pour activer le GPS global).
-  /// Utile quand serviceDisabled == true.
-  Future<void> openLocationSettings() async {
-    await Geolocator.openLocationSettings();
-  }
+  Future<void> openAppSettings() async => ph.openAppSettings();
+  Future<void> openLocationSettings() async =>
+      Geolocator.openLocationSettings();
 }
 
-/// Observe le cycle de vie de l'app pour relancer le GPS quand l'utilisateur
-/// revient au premier plan après avoir potentiellement accordé la permission
-/// dans les Réglages Android.
+// ── Lifecycle Observer ────────────────────────────────────────────────────────
+
+/// Gère le cycle de vie GPS en fonction de l'état de l'app :
+///   - paused   → démarre le foreground service (GPS survit à la mise en veille)
+///   - resumed  → arrête le foreground service (l'app est au premier plan,
+///                le service n'est plus nécessaire), retente start() si besoin
+///                (ex: permission accordée dans les Réglages entre-temps)
 class _LifecycleObserver with WidgetsBindingObserver {
   final GpsService service;
   _LifecycleObserver(this.service);
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && !service.isActive) {
-      debugPrint('[GPS] App resumed, retry start()');
-      service.start();
+    switch (state) {
+      case AppLifecycleState.paused:
+        // L'app passe en arrière-plan → on démarre le foreground service
+        // pour que le GPS continue pendant la veille écran.
+        service.startForegroundService();
+        break;
+      case AppLifecycleState.resumed:
+        // L'app revient au premier plan → le foreground service n'est plus
+        // nécessaire. On le coupe pour supprimer la notification.
+        // On retente aussi start() au cas où la permission aurait été
+        // accordée manuellement dans les Réglages pendant l'absence.
+        service._stopForegroundService();
+        if (!service.isActive) {
+          debugPrint('[GPS] App resumed, retry start()');
+          service.start();
+        }
+        break;
+      default:
+        break;
     }
   }
 }

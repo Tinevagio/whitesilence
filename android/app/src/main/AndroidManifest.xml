@@ -1,7 +1,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- ── Permissions localisation ─────────────────────────────────────────
+         ACCESS_FINE_LOCATION  : GPS précis (obligatoire pour geolocator)
+         ACCESS_COARSE_LOCATION: fallback réseau
+         FOREGROUND_SERVICE    : autoriser un Foreground Service (Android 9+)
+         FOREGROUND_SERVICE_LOCATION : type "location" du foreground service
+                                       (obligatoire depuis Android 14)
+
+         On n'utilise PAS ACCESS_BACKGROUND_LOCATION : cette permission
+         nécessite une justification Google Play et un processus de review
+         supplémentaire. La philosophie WhiteSilence est "foreground only" :
+         le GPS tourne uniquement quand l'app est visible OU en foreground
+         service avec notification. Dès que l'utilisateur ferme l'app
+         complètement, le GPS s'arrête.
+    ──────────────────────────────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.INTERNET"/>
 
@@ -9,6 +25,7 @@
         android:label="WhiteSilence"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -18,10 +35,6 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
-            <!-- Specifies an Android theme to apply to this Activity as soon as
-                 the Android process has started. This theme is visible to the user
-                 while the Flutter UI initializes. After that, this theme continues
-                 to determine the Window background behind the Flutter UI. -->
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
@@ -31,17 +44,25 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- Don't delete the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+
+        <!-- ── Foreground Service GPS ──────────────────────────────────────
+             Service déclaré pour maintenir le GPS actif quand l'écran est
+             verrouillé ou quand l'app est en arrière-plan (pas fermée).
+             android:foregroundServiceType="location" est requis depuis
+             Android 10 pour que le service puisse accéder au GPS.
+             GpsService.dart démarre/arrête ce service via la méthode
+             channel "gps_foreground_service/control".
+        ──────────────────────────────────────────────────────────────────── -->
+        <service
+            android:name=".GpsForegroundService"
+            android:foregroundServiceType="location"
+            android:exported="false"/>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
-    <!-- Required to query activities that can process text, see:
-         https://developer.android.com/training/package-visibility and
-         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
 
-         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>

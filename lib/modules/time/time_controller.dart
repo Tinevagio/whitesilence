@@ -187,8 +187,10 @@ class TimeController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Munter local pour ce calcul (snapshot des paramètres)
-      final munter = MunterEngine(munterProfileFrom(_userProfile));
+      // Utilise le moteur calibré (_munter) — et non un engine local vierge.
+      // Bug corrigé v2 : créer un MunterEngine local ici ignorait toute la
+      // calibration GPS accumulée pendant la sortie.
+      final munter = _munter;
 
       // Grille Open-Meteo : 2 km de rayon
       const gridRadiusM = 2000.0;
@@ -383,3 +385,4 @@ class TimeController extends ChangeNotifier {
     _rebuildEngine();
   }
 }
+

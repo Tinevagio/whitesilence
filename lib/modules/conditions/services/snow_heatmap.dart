@@ -10,6 +10,7 @@
 // On utilise compute() pour ne pas bloquer le thread UI.
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -156,8 +157,9 @@ Uint8List _renderHeatmapBytes(_RenderParams params) {
           vSum = p.snow;
           break;
         }
-        // Puissance 1.5 — équilibre lissage / précision
-        final w = 1.0 / (d2 * 1.2247); // ≈ d^1.5
+        // Puissance 2.5 (= d² × √d²) — identique au frontend V7.
+        // Donne des gradients nets vs puissance 1.5 qui lissait trop.
+        final w = 1.0 / (d2 * math.sqrt(d2));
         wSum += w;
         vSum += w * p.snow;
       }
