@@ -117,13 +117,22 @@ class GpsService extends ChangeNotifier {
   /// Sans danger si le service est déjà lancé.
   Future<void> startForegroundService() async {
     if (_foregroundServiceRunning || !_isActive) return;
+
+    // Android 14+ (targetSDK ≥ 34) : le Foreground Service de type "location"
+    // ne peut démarrer que si la permission GPS est déjà granted au moment
+    // de l'appel. Sinon → SecurityException fatale.
+    // On vérifie avant d'appeler le service natif.
+    final status = await ph.Permission.locationWhenInUse.status;
+    if (!status.isGranted && !status.isLimited) {
+      debugPrint('[GPS] Foreground service ignoré — permission non accordée ($status)');
+      return;
+    }
+
     try {
       await _channel.invokeMethod('start');
       _foregroundServiceRunning = true;
       debugPrint('[GPS] Foreground service démarré');
     } catch (e) {
-      // Le service n'est pas critique — si le démarrage échoue (ex: en debug
-      // sans le service déclaré), on log et on continue sans lui.
       debugPrint('[GPS] Foreground service non disponible: $e');
     }
   }

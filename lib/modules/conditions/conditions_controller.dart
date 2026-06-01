@@ -15,9 +15,12 @@ import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'models/avalanche_zone.dart';
+import 'models/bera_full.dart';
 import 'models/bera_info.dart';
 import 'models/best_window.dart';
 import 'models/point_conditions.dart';
+import 'services/avalanche_engine.dart';
+import 'services/bera_full_service.dart';
 import 'services/conditions_api.dart';
 import 'services/conditions_cache.dart';
 import 'services/snow_heatmap.dart';
@@ -103,6 +106,13 @@ class ConditionsController extends ChangeNotifier {
 
   BeraInfo? _bera;
   BeraInfo? get bera => _bera;
+
+  // BeraFull : bulletin enrichi depuis Tinevagio/Ski-touring-live.
+  // Chargé en parallèle du BERA léger. Utilisé par AvalancheEngine pour
+  // le calcul local des cônes (pentes dangereuses, limites, enneigement).
+  BeraFull? _beraFull;
+  BeraFull? get beraFull => _beraFull;
+  final BeraFullService _beraFullService = BeraFullService();
 
   // ── Avalanche ────────────────────────────────────────────────────────────
   // L'avalanche se déclenche à part du fetch de la grille de conditions :
@@ -519,9 +529,24 @@ class ConditionsController extends ChangeNotifier {
       final info = await _api.getBeraInfo(center);
       _bera = info;
       _lastBeraPoint = center;
+
+      // Charge BeraFull de façon synchrone (pas fire-and-forget).
+      // fetchAvalanche() est appelé juste après depuis onBboxDrawn() —
+      // si on charge en fire-and-forget, _beraFull est encore null au
+      // moment de l'appel et on tombe systématiquement sur le backend.
+      if (info?.massifName != null) {
+        try {
+          _beraFull = await _beraFullService.getByMassifName(info!.massifName!);
+          debugPrint('[conditions] beraFull: \${_beraFull?.massif ?? "non trouvé"}');
+        } catch (e) {
+          debugPrint('[conditions] beraFull load failed: \$e');
+          _beraFull = null;
+        }
+      }
+
       notifyListeners();
     } catch (e) {
-      debugPrint('[conditions] BERA fetch failed: $e');
+      debugPrint('[conditions] BERA fetch failed: \$e');
       // Pas d'erreur visible — le BERA est secondaire
     }
   }
@@ -548,24 +573,57 @@ class ConditionsController extends ChangeNotifier {
     }
   }
 
-  /// Fetch les zones d'avalanche pour la bbox courante (dessinée par
-  /// l'utilisateur). N'a pas de sens sans bbox.
+  /// Calcule les zones d'avalanche pour la bbox courante.
+  ///
+  /// Stratégie locale-first :
+  ///   1. Si tuiles HGT disponibles → AvalancheEngine local (offline,
+  ///      instantané, sans cold-start Render)
+  ///   2. Sinon → fallback appel backend Render (comportement précédent)
+  ///
+  /// Même AvalancheResponse dans les deux cas — l'UI ne voit pas la différence.
   Future<void> fetchAvalanche() async {
     final box = drawnBbox;
     if (box == null) {
       debugPrint('[conditions] avalanche fetch ignoré — pas de bbox dessinée');
       return;
     }
+
+    final beraFull = _beraFull;
+
     _avalancheLoading = true;
     notifyListeners();
+
+    debugPrint('[conditions] avalanche: beraFull=${beraFull?.massif ?? "null"}, '
+        'bbox=${box.sw.latitude.toStringAsFixed(3)},${box.sw.longitude.toStringAsFixed(3)}');
+
     try {
+      if (beraFull != null) {
+        // ── Tentative locale (HGT) ─────────────────────────────────────────
+        final local = await AvalancheEngine.computeZones(
+          sw:           box.sw,
+          ne:           box.ne,
+          bera:         beraFull,
+          riskOverride: _riskOverride,
+        );
+
+        if (local != null) {
+          debugPrint('[conditions] avalanche local : '
+              '${local.startZones.length} zones, ${local.cones.length} cônes');
+          _avalanche = local;
+          return;
+        }
+
+        debugPrint('[conditions] HGT indispo → fallback backend Render');
+      }
+
+      // ── Fallback backend ───────────────────────────────────────────────
       _avalanche = await _api.fetchAvalanche(
         box.sw,
         box.ne,
         riskOverride: _riskOverride,
       );
     } catch (e) {
-      debugPrint('[conditions] avalanche fetch failed: $e');
+      debugPrint('[conditions] avalanche failed: $e');
       _avalanche = null;
       _errorMessage = 'Erreur avalanche : $e';
     } finally {

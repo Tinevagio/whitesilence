@@ -48,10 +48,22 @@ class GpsForegroundService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(NOTIFICATION_ID, buildNotification())
-        // START_STICKY : Android redémarre le service si tué (mémoire basse)
-        // mais ne le redémarre PAS si l'utilisateur swipe l'app → comportement
-        // souhaité : l'utilisateur ferme l'app → GPS s'arrête.
+        // Android 14+ (targetSDK ≥ 34) : startForeground() lève une
+        // SecurityException si ACCESS_FINE_LOCATION n'est pas encore granted
+        // au moment de l'appel — même si la permission est déclarée dans le
+        // manifest. On attrape l'exception pour éviter le crash fatal.
+        // Le GPS continuera de fonctionner sans foreground service tant que
+        // l'app est au premier plan ; le service sera retranté à la prochaine
+        // mise en arrière-plan une fois la permission confirmée.
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        } catch (e: SecurityException) {
+            android.util.Log.w("GpsFGS",
+                "startForeground refusé — permission GPS non accordée : ${e.message}")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         return START_STICKY
     }
 
