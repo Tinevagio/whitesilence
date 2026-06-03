@@ -1,7 +1,7 @@
 name: whitesilence
 description: Ski de rando sans inscription, sans tracking, sans bruit. La seule trace, c'est celle dans la neige.
 publish_to: 'none'
-version: 0.1.0+6
+version: 0.1.0+8
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

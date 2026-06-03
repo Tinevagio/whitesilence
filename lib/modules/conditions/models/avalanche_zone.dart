@@ -12,9 +12,21 @@
 import 'package:latlong2/latlong.dart';
 
 /// Réponse de /avalanche.
+/// Zone de risque fusionnée — union de tous les flood-fills d'un même niveau.
+/// Un polygone par niveau BERA actif (1-5).
+class AvalancheRiskZone {
+  final int risque;          // 1-5
+  final List<LatLng> ring;   // contour de l'union des cellules inondées
+  const AvalancheRiskZone({required this.risque, required this.ring});
+}
+
 class AvalancheResponse {
   /// Identifiant du massif concerné (ex: "Belledonne")
   final String? massifName;
+
+  /// Zones fusionnées par niveau de risque (une par niveau BERA actif).
+  /// Null si calculé depuis le backend (pas de fusion côté backend).
+  final List<AvalancheRiskZone>? mergedZones;
 
   /// Niveau de risque BERA bas appliqué (1-5)
   final int risqueBas;
@@ -32,6 +44,7 @@ class AvalancheResponse {
     required this.massifName,
     required this.risqueBas,
     required this.risqueHaut,
+    this.mergedZones,
     required this.startZones,
     required this.cones,
   });
@@ -115,7 +128,7 @@ class AvalancheResponse {
   /// false = on fait confiance au backend (cônes affichés tels quels).
   /// true  = on applique une symétrie centrale autour du premier point du
   ///         polygone (workaround d'un bug supposé côté backend).
-  static const bool _mirrorCones = false;
+  static const bool _mirrorCones = true;
 
   /// Symétrie centrale du polygone autour de son premier point (l'apex
   /// supposé). Pour chaque point P, on calcule P' = 2*apex - P.

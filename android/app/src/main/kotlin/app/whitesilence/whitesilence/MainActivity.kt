@@ -41,6 +41,51 @@ class MainActivity : FlutterActivity() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var collectJob: Job? = null
 
+    // true quand GpsService.dart a demandé le foreground service.
+    private var _gpsServiceRequested = false
+
+    // Timestamp du dernier onStop() — utilisé pour ignorer les micro-transitions.
+    // onStop()/onStart() se déclenchent aussi sur des changements de configuration
+    // mineurs (barre de navigation, dialogue système, rotation). Si onStart()
+    // arrive dans les GRACE_MS après onStop(), c'est une micro-transition, pas
+    // un vrai passage en arrière-plan → on n'annule pas le service.
+    private var _stopTimestamp = 0L
+    private val GRACE_MS = 800L
+
+    // Handler pour différer le démarrage du service après le délai de grâce.
+    private val _handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val _startServiceRunnable = Runnable {
+        if (!_gpsServiceRequested) return@Runnable
+        try {
+            val intent = Intent(this, GpsForegroundService::class.java)
+            startForegroundService(intent)
+            android.util.Log.d("MainActivity", "GPS FGS démarré (vrai background)")
+        } catch (e: Exception) {
+            android.util.Log.w("MainActivity", "GPS FGS start failed: ${e.message}")
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!_gpsServiceRequested) return
+        // Différer le démarrage de GRACE_MS. Si onStart() arrive avant,
+        // on annule — c'était une micro-transition (dialogue, navbar, etc.)
+        _stopTimestamp = System.currentTimeMillis()
+        _handler.postDelayed(_startServiceRunnable, GRACE_MS)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val elapsed = System.currentTimeMillis() - _stopTimestamp
+        // Annuler le démarrage différé (micro-transition ou retour rapide)
+        _handler.removeCallbacks(_startServiceRunnable)
+        // Arrêter le service seulement s'il a eu le temps de démarrer
+        if (!_gpsServiceRequested || elapsed < GRACE_MS) return
+        val intent = Intent(this, GpsForegroundService::class.java)
+        stopService(intent)
+        android.util.Log.d("MainActivity", "GPS FGS arrêté (app revenue au 1er plan)")
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -118,11 +163,15 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "start" -> {
-                        val intent = Intent(this, GpsForegroundService::class.java)
-                        startForegroundService(intent)
+                        // Le "start" depuis Dart est ignoré — le service est
+                        // démarré depuis onStop() qui est le dernier moment
+                        // où l'Activity est encore éligible sur Android 14.
+                        // Dart signale juste son intention ; Kotlin décide du timing.
+                        _gpsServiceRequested = true
                         result.success(null)
                     }
                     "stop" -> {
+                        _gpsServiceRequested = false
                         val intent = Intent(this, GpsForegroundService::class.java)
                         stopService(intent)
                         result.success(null)

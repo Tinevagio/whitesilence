@@ -25,7 +25,7 @@ import 'review_screen.dart';
 import 'snow_controller.dart';
 
 /// Filtre d'affichage : quelles obs montrer sur la carte.
-enum ObsViewFilter { mine, community, all }
+enum ObsViewFilter { none, mine, community, all }
 
 /// État partagé du module Obs : filtre source + filtre temporel + filtre types.
 ///
@@ -156,8 +156,8 @@ class _ObservationsLayer extends StatelessWidget {
           [controller, communityController, viewState]),
       builder: (context, _) {
         final filter = viewState.filter;
-        final showMine = filter != ObsViewFilter.community;
-        final showCommunity = filter != ObsViewFilter.mine;
+        final showMine      = filter == ObsViewFilter.mine || filter == ObsViewFilter.all;
+        final showCommunity = filter == ObsViewFilter.community || filter == ObsViewFilter.all;
 
         // Source brute selon le toggle Mes/Comm/Toutes
         final mineRaw = showMine ? controller.observations : <Observation>[];
@@ -505,9 +505,12 @@ class _SnowActionPanel extends StatelessWidget {
       animation: Listenable.merge(
           [controller, communityController, viewState]),
       builder: (context, _) {
-        // start() est idempotent → safe à chaque rebuild
-        controller.start();
-        communityController.start();
+        // start() déclenche notifyListeners → ne pas appeler directement dans
+        // build() : provoque setState() during build. On diffère au frame suivant.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          controller.start();
+          communityController.start();
+        });
 
         return Container(
           padding: const EdgeInsets.fromLTRB(
@@ -596,6 +599,11 @@ class _ViewToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     return SegmentedButton<ObsViewFilter>(
       segments: [
+        const ButtonSegment(
+          value: ObsViewFilter.none,
+          label: Text('Aucune'),
+          icon: Icon(Icons.visibility_off_outlined, size: 16),
+        ),
         ButtonSegment(
           value: ObsViewFilter.mine,
           label: Text('Mes ($mineCount)'),

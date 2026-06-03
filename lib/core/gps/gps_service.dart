@@ -183,11 +183,16 @@ class GpsService extends ChangeNotifier {
 
 // ── Lifecycle Observer ────────────────────────────────────────────────────────
 
-/// Gère le cycle de vie GPS en fonction de l'état de l'app :
-///   - paused   → démarre le foreground service (GPS survit à la mise en veille)
-///   - resumed  → arrête le foreground service (l'app est au premier plan,
-///                le service n'est plus nécessaire), retente start() si besoin
-///                (ex: permission accordée dans les Réglages entre-temps)
+/// Gère le cycle de vie GPS.
+///
+/// Sur Android 14, startForegroundService() de type "location" exige que
+/// l'Activity soit encore dans un état éligible (visible ou en train de
+/// passer en arrière-plan via onStop()). Appeler depuis AppLifecycleState.paused
+/// est trop tardif — l'Activity est déjà non-éligible.
+///
+/// Solution : Dart envoie juste "start" / "stop" au channel Kotlin.
+/// MainActivity.kt démarre effectivement le service depuis onStop() et
+/// l'arrête depuis onStart() — ces callbacks Android sont au bon moment.
 class _LifecycleObserver with WidgetsBindingObserver {
   final GpsService service;
   _LifecycleObserver(this.service);
@@ -196,15 +201,12 @@ class _LifecycleObserver with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.paused:
-        // L'app passe en arrière-plan → on démarre le foreground service
-        // pour que le GPS continue pendant la veille écran.
+        // Signaler l'intention à Kotlin — le démarrage effectif se fait
+        // dans MainActivity.onStop() qui est appelé juste après.
         service.startForegroundService();
         break;
       case AppLifecycleState.resumed:
-        // L'app revient au premier plan → le foreground service n'est plus
-        // nécessaire. On le coupe pour supprimer la notification.
-        // On retente aussi start() au cas où la permission aurait été
-        // accordée manuellement dans les Réglages pendant l'absence.
+        // Signaler l'arrêt à Kotlin + retenter start() si GPS inactif.
         service._stopForegroundService();
         if (!service.isActive) {
           debugPrint('[GPS] App resumed, retry start()');

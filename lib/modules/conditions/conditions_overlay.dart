@@ -41,6 +41,16 @@ class ConditionsModuleOverlay extends MapModuleOverlay {
     // On répercute les notifications du controller pour que la WSMapScreen
     // (qui écoute l'overlay) rebuild quand le mode dessin change.
     controller.addListener(notifyListeners);
+
+    // start() est appelé ici (une seule fois) plutôt que dans buildMapLayers().
+    // buildMapLayers() est appelé à chaque rebuild → appeler start() dedans
+    // crée une boucle : start() → notifyListeners → rebuild → buildMapLayers
+    // → start() → notifyListeners → ...
+    // addPostFrameCallback garantit que le premier frame est peint avant
+    // que start() ne déclenche ses propres notifyListeners.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      controller.start();
+    });
   }
 
   @override
@@ -60,8 +70,8 @@ class ConditionsModuleOverlay extends MapModuleOverlay {
 
   @override
   List<Widget> buildMapLayers(BuildContext context) {
-    // start() est idempotent
-    controller.start();
+    // start() est appelé dans le constructeur via addPostFrameCallback —
+    // pas ici pour éviter la boucle rebuild.
 
     // Si une autre partie de l'app (typiquement Idées via ModuleNavigator)
     // a demandé d'afficher Conditions sur une bbox précise, on la consomme
@@ -202,25 +212,41 @@ class _DrawnBboxLayer extends StatelessWidget {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        final box = controller.drawnBbox;
-        if (box == null) return const SizedBox.shrink();
-
+        final bboxes   = controller.drawnBboxes;
+        final current  = controller.drawnBbox;
         final isDrawing = controller.isDrawing;
-        final points = [
-          box.sw,
-          LatLng(box.sw.latitude, box.ne.longitude),
-          box.ne,
-          LatLng(box.ne.latitude, box.sw.longitude),
+
+        final polygons = <Polygon>[
+          // Toutes les bbox validées (historique)
+          for (final box in bboxes)
+            Polygon(
+              points: [
+                box.sw,
+                LatLng(box.sw.latitude, box.ne.longitude),
+                box.ne,
+                LatLng(box.ne.latitude, box.sw.longitude),
+              ],
+              color:             WSColors.glacierBlue.withOpacity(0.04),
+              borderColor:       WSColors.glacierBlue.withOpacity(0.5),
+              borderStrokeWidth: 1.0,
+            ),
+          // Bbox en cours de dessin
+          if (isDrawing && current != null)
+            Polygon(
+              points: [
+                current.sw,
+                LatLng(current.sw.latitude, current.ne.longitude),
+                current.ne,
+                LatLng(current.ne.latitude, current.sw.longitude),
+              ],
+              color:             WSColors.glacierBlue.withOpacity(0.10),
+              borderColor:       WSColors.glacierBlue.withOpacity(0.9),
+              borderStrokeWidth: 2.0,
+            ),
         ];
 
-        return PolygonLayer(polygons: [
-          Polygon(
-            points: points,
-            color: WSColors.glacierBlue.withOpacity(isDrawing ? 0.10 : 0.04),
-            borderColor: WSColors.glacierBlue.withOpacity(isDrawing ? 0.9 : 0.5),
-            borderStrokeWidth: isDrawing ? 2.0 : 1.0,
-          ),
-        ]);
+        if (polygons.isEmpty) return const SizedBox.shrink();
+        return PolygonLayer(polygons: polygons);
       },
     );
   }
@@ -295,29 +321,46 @@ class _AvalancheLayer extends StatelessWidget {
       listenable: controller,
       builder: (context, _) {
         if (!controller.avalancheVisible) return const SizedBox.shrink();
-        final av = controller.avalanche;
-        if (av == null) return const SizedBox.shrink();
+        // Afficher toutes les réponses avalanche (toutes les bbox)
+        final allResponses = controller.avalancheByBbox.values.toList();
+        if (allResponses.isEmpty) return const SizedBox.shrink();
 
-        // Cônes de propagation : polygones colorés selon le niveau BERA
-        // de la zone de départ (palette officielle Météo France).
-        //   1 = jaune, 2 = orange clair, 3 = orange foncé, 4 = rouge, 5 = rouge foncé.
-        // L'opacité de fond reste modulée légèrement par `severity` pour
-        // donner du relief visuel quand plusieurs cônes du même risque se
-        // chevauchent — mais c'est la couleur qui porte l'information de niveau.
-        final polygons = <Polygon>[
-          for (final cone in av.cones)
-            Polygon(
-              points:            cone.ring,
-              color:             WSColors.beraColor(cone.risque)
-                  .withOpacity(0.22 + (cone.severity.clamp(0, 1) * 0.18)),
-              borderColor:       WSColors.beraColor(cone.risque)
-                  .withOpacity(0.75),
-              borderStrokeWidth: 1.0,
-            ),
-        ];
+        // ── Zones fusionnées (engine local) ou cônes individuels (backend) ──
+        //
+        // Engine local → mergedZones : 1 polygone par niveau BERA actif.
+        //   Rendu carte de danger : couleur = niveau, opacité fixe, contour net.
+        //   Risques triés croissant → risque 5 affiché par-dessus risque 3.
+        //
+        // Backend → cones : polygones individuels (comportement précédent).
+        final polygons = <Polygon>[];
+        for (final av in allResponses) {
+          if (av.mergedZones != null && av.mergedZones!.isNotEmpty) {
+            for (final zone in av.mergedZones!) {
+              polygons.add(Polygon(
+                points:            zone.ring,
+                color:             WSColors.beraColor(zone.risque)
+                    .withOpacity(0.28),
+                borderColor:       WSColors.beraColor(zone.risque)
+                    .withOpacity(0.85),
+                borderStrokeWidth: 1.5,
+              ));
+            }
+          } else {
+            for (final cone in av.cones)
+              polygons.add(Polygon(
+                points:            cone.ring,
+                color:             WSColors.beraColor(cone.risque)
+                    .withOpacity(0.22 + (cone.severity.clamp(0, 1) * 0.18)),
+                borderColor:       WSColors.beraColor(cone.risque)
+                    .withOpacity(0.75),
+                borderStrokeWidth: 1.0,
+              ));
+          }
+        }
 
-        // Zones de départ : marqueurs colorés selon le BERA aussi.
+        // Zones de départ : marqueurs de toutes les bbox.
         final markers = <Marker>[
+          for (final av in allResponses)
           for (final z in av.startZones)
             Marker(
               point:  z.point,
@@ -739,12 +782,21 @@ class _PanelHeader extends StatelessWidget {
     // on n'affiche que ce qui existe pour éviter le bruit.
     final summary = <Widget>[];
     if (collapsed) {
-      final risque = controller.bera?.risqueBas;
-      if (risque != null) {
+      final beraInfo   = controller.bera;
+      final beraFull   = controller.beraFull;
+      final risqueBas  = beraFull?.risqueBas  ?? beraInfo?.risqueBas;
+      final risqueHaut = beraFull?.risqueHaut  ?? beraInfo?.risqueHaut;
+      if (risqueBas != null) {
+        final String riskTxt;
+        if (risqueHaut != null && risqueHaut != risqueBas) {
+          riskTxt = 'BERA $risqueBas-$risqueHaut';
+        } else {
+          riskTxt = 'BERA $risqueBas';
+        }
         summary.add(_SummaryPill(
           icon: Icons.warning_amber_outlined,
-          text: 'BERA $risque/5',
-          color: _beraColor(risque),
+          text: riskTxt,
+          color: _beraColor(risqueHaut ?? risqueBas),
         ));
       }
       final nbPoints = controller.accumulatedPoints.length;
@@ -1011,13 +1063,29 @@ class _BeraChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bera = controller.bera;
+    final bera     = controller.bera;
     if (bera == null) return const SizedBox.shrink();
 
-    final risk = bera.displayRisk;
-    final riskColor = _riskColor(risk);
-    final riskTxt = risk == null ? '?' : '$risk/5';
-    final massifName = bera.massifName;
+    // Préférer BeraFull (Tinevagio) quand disponible — source plus fiable
+    // et cohérente avec l'écran détail BERA. BeraInfo (Render) en fallback.
+    final beraFull = controller.beraFull;
+
+    final int? risqueBas  = beraFull?.risqueBas  ?? bera.risqueBas;
+    final int? risqueHaut = beraFull?.risqueHaut  ?? bera.risqueHaut;
+    // Altitude de transition risque bas/haut — utiliser risqueAltitudeM (BeraFull),
+    // pas limiteNordM qui est la limite d'enneigement (champ différent).
+    final int? risqueAlti = beraFull?.risqueAltitudeM;
+    final int? risk       = risqueHaut ?? risqueBas;
+    final riskColor       = _riskColor(risk);
+
+    final String riskTxt;
+    if (risqueBas != null && risqueHaut != null && risqueHaut != risqueBas) {
+      final altStr = risqueAlti != null ? ' (>${risqueAlti}m)' : '';
+      riskTxt = '$risqueBas-$risqueHaut$altStr';
+    } else {
+      riskTxt = risk == null ? '?' : '$risk';
+    }
+    final massifName = beraFull?.massif ?? bera.massifName;
 
     // Le chip devient tappable si on a un nom de massif : ouvre l'écran
     // détail BERA (récupère le bulletin complet depuis le repo public

@@ -73,11 +73,18 @@ class ConditionsController extends ChangeNotifier {
 
   /// Vide tous les points cumulés. Utile si l'utilisateur veut repartir
   /// à zéro (par exemple bouton "Effacer la carte" dans l'action panel).
+  /// Efface tout : points de conditions, heatmap, bbox dessinées,
+  /// polygones avalanche. Remet le module dans son état initial.
   void clearAccumulatedPoints() {
     _accumulatedPoints.clear();
-    _grid = null;
+    _grid          = null;
     _gridFetchedAt = null;
-    _snowHeatmap = null;
+    _snowHeatmap   = null;
+    _avalancheByBbox.clear();
+    _drawnBboxes.clear();
+    _currentBboxKey = null;
+    _drawAnchor  = null;
+    _drawCurrent = null;
     notifyListeners();
   }
 
@@ -118,8 +125,21 @@ class ConditionsController extends ChangeNotifier {
   // L'avalanche se déclenche à part du fetch de la grille de conditions :
   // c'est plus lourd (potentiellement 300 zones + cônes), donc opt-in via
   // un toggle dans l'action panel. Quand activé, on fetch sur la même bbox.
-  AvalancheResponse? _avalanche;
-  AvalancheResponse? get avalanche => _avalanche;
+  // Map bbox_key → AvalancheResponse pour conserver les résultats de
+  // toutes les bbox dessinées. Une nouvelle bbox n'efface plus les anciennes.
+  // Clé = "\${sw.lat},\${sw.lon},\${ne.lat},\${ne.lon}" arrondie à 4 décimales.
+  final Map<String, AvalancheResponse> _avalancheByBbox = {};
+
+  /// Union de toutes les AvalancheResponse connues — pour l'affichage.
+  /// L'overlay itère sur toutes les bbox et affiche l'ensemble.
+  Map<String, AvalancheResponse> get avalancheByBbox =>
+      Map.unmodifiable(_avalancheByBbox);
+
+  /// Réponse avalanche pour la bbox courante (rétrocompat).
+  AvalancheResponse? get avalanche {
+    final key = _currentBboxKey;
+    return key != null ? _avalancheByBbox[key] : null;
+  }
 
   bool _avalancheVisible = false;
   bool get avalancheVisible => _avalancheVisible;
@@ -215,6 +235,19 @@ class ConditionsController extends ChangeNotifier {
 
   LatLng? _drawAnchor;   // premier coin (où le drag a commencé)
   LatLng? _drawCurrent;  // deuxième coin (à jour pendant le drag)
+
+  // Historique des bbox validées (affichage de tous les rectangles)
+  final List<({LatLng sw, LatLng ne})> _drawnBboxes = [];
+  List<({LatLng sw, LatLng ne})> get drawnBboxes =>
+      List.unmodifiable(_drawnBboxes);
+
+  // Clé de la bbox courante pour indexer _avalancheByBbox
+  String? _currentBboxKey;
+  String? get currentBboxKey => _currentBboxKey;
+
+  static String _bboxKey(LatLng sw, LatLng ne) =>
+      '${sw.latitude.toStringAsFixed(4)},${sw.longitude.toStringAsFixed(4)},'
+      '${ne.latitude.toStringAsFixed(4)},${ne.longitude.toStringAsFixed(4)}';
 
   /// Limite côté en km : on ne laisse pas l'utilisateur dessiner plus grand
   /// que ça. Reprise du frontend Netlify (5 km) avec marge un peu plus large
@@ -333,14 +366,13 @@ class ConditionsController extends ChangeNotifier {
     }
 
     _isDrawing = false;
-    notifyListeners();
 
-    // L'ancienne avalanche/best-window n'est plus pertinente sur la nouvelle bbox.
-    // On les dégage tout de suite, et si elles étaient visibles, on refetch.
-    final wasAvalancheVisible = _avalancheVisible;
-    final wasBestWindowVisible = _bestWindowVisible;
-    _avalanche = null;
+    // Enregistrer la nouvelle bbox dans l'historique
+    _drawnBboxes.add(box);
+    _currentBboxKey = _bboxKey(box.sw, box.ne);
     _bestWindow = null;
+
+    notifyListeners();
 
     // Fetch automatique de la zone qu'on vient de dessiner
     fetchGrid(box.sw, box.ne, force: true);
@@ -348,10 +380,12 @@ class ConditionsController extends ChangeNotifier {
       (box.sw.latitude  + box.ne.latitude)  / 2,
       (box.sw.longitude + box.ne.longitude) / 2,
     ));
-    if (wasAvalancheVisible) {
-      fetchAvalanche();
+    // Avalanche : toujours fetcher pour une nouvelle bbox
+    // (pas de guard containsKey — chaque nouvelle bbox doit être calculée)
+    if (_avalancheVisible) {
+      fetchAvalanche(box);
     }
-    if (wasBestWindowVisible) {
+    if (_bestWindowVisible) {
       fetchBestWindow();
     }
   }
@@ -525,26 +559,35 @@ class ConditionsController extends ChangeNotifier {
       // ~30 km à la latitude des Alpes
       if (dLat < 0.3 && dLon < 0.3) return;
     }
+
+    // Invalider _beraFull IMMÉDIATEMENT avant l'appel réseau.
+    // Sans ça, si fetchAvalanche() est appelé pendant le fetch BERA
+    // (onBboxDrawn() les déclenche quasi-simultanément), il utilise le
+    // _beraFull du massif précédent → cônes calculés avec le mauvais BERA.
+    // Mieux vaut un fallback backend (beraFull=null) que des cônes faux.
+    _beraFull = null;
+
     try {
       final info = await _api.getBeraInfo(center);
+      final previousMassif = _bera?.massifName;
       _bera = info;
       _lastBeraPoint = center;
 
       // Charge BeraFull de façon synchrone (pas fire-and-forget).
-      // fetchAvalanche() est appelé juste après depuis onBboxDrawn() —
-      // si on charge en fire-and-forget, _beraFull est encore null au
-      // moment de l'appel et on tombe systématiquement sur le backend.
+      // fetchAvalanche() peut être rappelé après le changement de zone —
+      // _beraFull sera disponible pour le prochain calcul.
       if (info?.massifName != null) {
         try {
           _beraFull = await _beraFullService.getByMassifName(info!.massifName!);
-          debugPrint('[conditions] beraFull: \${_beraFull?.massif ?? "non trouvé"}');
+          debugPrint('[conditions] beraFull: ${_beraFull?.massif ?? "non trouvé"}');
         } catch (e) {
           debugPrint('[conditions] beraFull load failed: \$e');
           _beraFull = null;
         }
       }
 
-      notifyListeners();
+      // Notifier seulement si le massif a changé — évite la boucle rebuild.
+      if (info?.massifName != previousMassif) notifyListeners();
     } catch (e) {
       debugPrint('[conditions] BERA fetch failed: \$e');
       // Pas d'erreur visible — le BERA est secondaire
@@ -558,18 +601,38 @@ class ConditionsController extends ChangeNotifier {
   Future<void> toggleAvalanche() async {
     _avalancheVisible = !_avalancheVisible;
     notifyListeners();
-    if (_avalancheVisible && _avalanche == null) {
-      await fetchAvalanche();
+    if (_avalancheVisible) {
+      // Fetcher toutes les bbox dessinées sans résultat encore
+      for (final box in _drawnBboxes) {
+        final key = _bboxKey(box.sw, box.ne);
+        if (!_avalancheByBbox.containsKey(key)) {
+          await fetchAvalanche(box);
+        }
+      }
     }
   }
 
-  /// Change le risque appliqué (override). Refetch automatique si visible.
+  /// Change le risque appliqué (override). Refetch automatique sur toutes
+  /// les bbox connues si l'avalanche est visible.
+  /// Debounce : si setRiskOverride est appelé rapidement (slider), on
+  /// annule le calcul précédent avant de relancer.
+  int _riskOverrideVersion = 0;
+
   Future<void> setRiskOverride(int? risk) async {
     if (risk == _riskOverride) return;
     _riskOverride = risk;
+    _riskOverrideVersion++; // invalide les calculs en cours
+    final version = _riskOverrideVersion;
     notifyListeners();
-    if (_avalancheVisible) {
-      await fetchAvalanche();
+    if (!_avalancheVisible) return;
+
+    // Refetcher toutes les bbox avec le nouveau risque.
+    // On ne vide PAS _avalancheByBbox avant — l'UI garde les anciens résultats
+    // pendant le recalcul (pas de flash vide).
+    for (final box in List.of(_drawnBboxes)) {
+      // Si un nouveau setRiskOverride est arrivé entre-temps → abandonner
+      if (version != _riskOverrideVersion) return;
+      await fetchAvalanche(box);
     }
   }
 
@@ -581,14 +644,21 @@ class ConditionsController extends ChangeNotifier {
   ///   2. Sinon → fallback appel backend Render (comportement précédent)
   ///
   /// Même AvalancheResponse dans les deux cas — l'UI ne voit pas la différence.
-  Future<void> fetchAvalanche() async {
-    final box = drawnBbox;
+  Future<void> fetchAvalanche([({LatLng sw, LatLng ne})? forcedBox]) async {
+    // Si une bbox est passée explicitement (ex: depuis onDrawEnd après que
+    // _drawAnchor a été mis à null), on l'utilise. Sinon on lit drawnBbox.
+    final box = forcedBox ?? drawnBbox;
     if (box == null) {
       debugPrint('[conditions] avalanche fetch ignoré — pas de bbox dessinée');
       return;
     }
 
-    final beraFull = _beraFull;
+    final bboxKey = _bboxKey(box.sw, box.ne);
+    _currentBboxKey = bboxKey;
+    final beraFull  = _beraFull;
+    // Snapshot de la version courante — si elle change pendant le calcul
+    // (nouveau setRiskOverride), on abandonne silencieusement.
+    final version = _riskOverrideVersion;
 
     _avalancheLoading = true;
     notifyListeners();
@@ -604,12 +674,14 @@ class ConditionsController extends ChangeNotifier {
           ne:           box.ne,
           bera:         beraFull,
           riskOverride: _riskOverride,
+          // maxZones calculé automatiquement selon la taille de la bbox
         );
 
         if (local != null) {
+          if (version != _riskOverrideVersion) return; // résultat périmé
           debugPrint('[conditions] avalanche local : '
-              '${local.startZones.length} zones, ${local.cones.length} cônes');
-          _avalanche = local;
+              '${local.startZones.length} zones, ${local.mergedZones?.length ?? 0} fusionnées');
+          _avalancheByBbox[bboxKey] = local;
           return;
         }
 
@@ -617,14 +689,15 @@ class ConditionsController extends ChangeNotifier {
       }
 
       // ── Fallback backend ───────────────────────────────────────────────
-      _avalanche = await _api.fetchAvalanche(
+      final response = await _api.fetchAvalanche(
         box.sw,
         box.ne,
         riskOverride: _riskOverride,
       );
+      if (response != null) _avalancheByBbox[bboxKey] = response;
     } catch (e) {
       debugPrint('[conditions] avalanche failed: $e');
-      _avalanche = null;
+      // En cas d'erreur on ne supprime pas les résultats précédents
       _errorMessage = 'Erreur avalanche : $e';
     } finally {
       _avalancheLoading = false;
