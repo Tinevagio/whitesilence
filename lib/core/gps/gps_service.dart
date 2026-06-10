@@ -10,6 +10,20 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 ///
 /// Un seul stream de positions, partagé entre tous les modules.
 ///
+/// ── Deux canaux de diffusion ─────────────────────────────────────────────────
+///
+///  1. ChangeNotifier (notifyListeners) — pour l'UI (recentrage carte, badges
+///     de permission…). Émet sur TOUT changement d'état observable : nouvelle
+///     position, mais aussi start/stop, changement de permission, service
+///     désactivé. C'est volontaire : l'UI veut se repeindre dans tous ces cas.
+///
+///  2. `positions` (Stream<Position>) — pour les consommateurs qui ont besoin
+///     du *flux de fixes réels uniquement* (typiquement le GpsCalibrator).
+///     Ce stream n'émet QUE des positions GPS live. Il n'émet jamais la
+///     dernière position connue (getLastKnownPosition), ni les événements de
+///     permission/cycle de vie. C'est ce qui évite que le calibrateur traite
+///     deux fois le même point ou casse un segment sur un notify parasite.
+///
 /// ── GPS en arrière-plan ──────────────────────────────────────────────────────
 ///
 /// Android 8+ suspend les streams GPS quand l'app n'est plus en foreground
@@ -19,12 +33,6 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 /// Solution : un Foreground Service Android (GpsForegroundService.kt) qui
 /// maintient le processus Flutter en vie. Ce service affiche une notification
 /// persistante "GPS actif" pendant qu'il tourne.
-///
-/// Cycle de vie du service :
-///   - Démarre quand l'app passe en arrière-plan (AppLifecycleState.paused)
-///   - S'arrête quand l'app revient au premier plan (AppLifecycleState.resumed)
-///   - S'arrête aussi si l'utilisateur tape "Arrêter" dans la notification
-///   - S'arrête si l'utilisateur swipe l'app hors du recents
 ///
 /// On N'utilise PAS ACCESS_BACKGROUND_LOCATION (review Google Play complexe).
 /// La permission "En cours d'utilisation seulement" suffit avec un Foreground
@@ -45,6 +53,18 @@ class GpsService extends ChangeNotifier {
   static const _channel = MethodChannel('gps_foreground_service/control');
 
   StreamSubscription<Position>? _sub;
+
+  /// Diffuseur des fixes GPS réels. Broadcast : plusieurs abonnés possibles.
+  ///
+  /// Ce singleton vit toute la durée de l'app : on ne ferme jamais ce
+  /// controller (un broadcast fermé est définitif et casserait un start()
+  /// ultérieur).
+  final StreamController<Position> _positions =
+      StreamController<Position>.broadcast();
+
+  /// Flux des fixes GPS live uniquement. Voir la doc de classe.
+  Stream<Position> get positions => _positions.stream;
+
   Position? _last;
   bool _isActive = false;
   bool _foregroundServiceRunning = false;
@@ -85,6 +105,10 @@ class GpsService extends ChangeNotifier {
       ).listen(
         (pos) {
           _last = pos;
+          // Canal "fixes réels" → calibrateur. On ne pousse ICI que les
+          // vrais fixes du stream Geolocator, jamais last-known.
+          if (!_positions.isClosed) _positions.add(pos);
+          // Canal UI.
           notifyListeners();
         },
         onError: (e) {
@@ -93,6 +117,9 @@ class GpsService extends ChangeNotifier {
       );
 
       _isActive = true;
+      // On garde la dernière position connue pour l'UI (recentrage immédiat),
+      // MAIS on ne la pousse pas dans `positions` : un point potentiellement
+      // très ancien fausserait le départ de segment du calibrateur.
       _last = await Geolocator.getLastKnownPosition();
       notifyListeners();
     } catch (e) {
@@ -121,7 +148,6 @@ class GpsService extends ChangeNotifier {
     // Android 14+ (targetSDK ≥ 34) : le Foreground Service de type "location"
     // ne peut démarrer que si la permission GPS est déjà granted au moment
     // de l'appel. Sinon → SecurityException fatale.
-    // On vérifie avant d'appeler le service natif.
     final status = await ph.Permission.locationWhenInUse.status;
     if (!status.isGranted && !status.isLimited) {
       debugPrint('[GPS] Foreground service ignoré — permission non accordée ($status)');
@@ -186,13 +212,9 @@ class GpsService extends ChangeNotifier {
 /// Gère le cycle de vie GPS.
 ///
 /// Sur Android 14, startForegroundService() de type "location" exige que
-/// l'Activity soit encore dans un état éligible (visible ou en train de
-/// passer en arrière-plan via onStop()). Appeler depuis AppLifecycleState.paused
-/// est trop tardif — l'Activity est déjà non-éligible.
-///
-/// Solution : Dart envoie juste "start" / "stop" au channel Kotlin.
-/// MainActivity.kt démarre effectivement le service depuis onStop() et
-/// l'arrête depuis onStart() — ces callbacks Android sont au bon moment.
+/// l'Activity soit encore dans un état éligible. Dart envoie juste
+/// "start" / "stop" au channel ; MainActivity.kt démarre/arrête réellement le
+/// service depuis onStop()/onStart(), qui sont au bon moment.
 class _LifecycleObserver with WidgetsBindingObserver {
   final GpsService service;
   _LifecycleObserver(this.service);
@@ -201,12 +223,9 @@ class _LifecycleObserver with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.paused:
-        // Signaler l'intention à Kotlin — le démarrage effectif se fait
-        // dans MainActivity.onStop() qui est appelé juste après.
         service.startForegroundService();
         break;
       case AppLifecycleState.resumed:
-        // Signaler l'arrêt à Kotlin + retenter start() si GPS inactif.
         service._stopForegroundService();
         if (!service.isActive) {
           debugPrint('[GPS] App resumed, retry start()');

@@ -31,6 +31,12 @@ class IsochroneConfig {
   final double maxStepM;
   final double maxRayDistanceM;
 
+  /// Facteur de tortuosité : réduit le budget temps effectif pour compenser
+  /// le fait que les sentiers font des détours par rapport à la ligne droite.
+  /// 0.80 = les isochrones se rétractent de ~20%, alignant mieux les contours
+  /// sur les temps de trajet réels par sentier (calibré empiriquement).
+  final double tortuosityFactor;
+
   const IsochroneConfig({
     this.timeBudgetsMinutes = const [15, 30, 45, 60],
     this.rayCount            = 72,
@@ -38,6 +44,7 @@ class IsochroneConfig {
     this.minStepM            = 15.0,
     this.maxStepM            = 200.0,
     this.maxRayDistanceM     = 8000.0,
+    this.tortuosityFactor    = 0.80,
   });
 }
 
@@ -72,15 +79,22 @@ class IsochroneEngine {
     final originFull = _LatLngWithAlt(origin.latitude, origin.longitude, originAlt);
 
     final budgets = List<int>.from(config.timeBudgetsMinutes)..sort();
+    // On applique le facteur de tortuosité : un budget de 30 min devient
+    // effectivement 30 × 0.80 = 24 min de propagation sur le rayon.
+    // Cela contracte les isochrones de ~20% pour qu'elles correspondent
+    // mieux aux temps de trajet réels par sentier.
+    final effectiveBudgets = budgets
+        .map((b) => (b * config.tortuosityFactor).round())
+        .toList();
     final Map<int, List<LatLng>> contours = {for (final b in budgets) b: []};
     final angleStep = 2 * pi / config.rayCount;
 
     for (int i = 0; i < config.rayCount; i++) {
       final angle = i * angleStep;
-      final rayPoints = await _traceRay(originFull, angle, budgets);
-      for (final b in budgets) {
-        final pt = rayPoints[b];
-        if (pt != null) contours[b]!.add(pt);
+      final rayPoints = await _traceRay(originFull, angle, effectiveBudgets);
+      for (int j = 0; j < budgets.length; j++) {
+        final pt = rayPoints[effectiveBudgets[j]];
+        if (pt != null) contours[budgets[j]]!.add(pt);
       }
     }
 

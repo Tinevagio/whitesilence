@@ -63,3 +63,25 @@ desktop.ini
 **/tiles/
 **/.cache/
 **/whitesilence.db*
+
+
+# ─── Pipeline OSM / tuiles de routage (WhiteSilence) ────────────────────────
+ 
+# Extraits OSM — très lourds (100–500 MB), à télécharger depuis Geofabrik
+*.osm.pbf
+*.pbf
+ 
+# Tuiles de routage générées par build_graph.py
+# Hébergées sur Supabase, pas besoin de les versionner
+out_tiles/
+*.wsr
+ 
+# Index osmium temporaire (créé pendant build_graph.py, Windows le laisse parfois)
+locations.idx
+*.idx
+ 
+# ─── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+ 

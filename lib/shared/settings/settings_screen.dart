@@ -12,7 +12,11 @@ import '../about/credits_screen.dart';
 import '../about/privacy_screen.dart';
 import '../manifesto/manifesto_screen.dart';
 import 'user_profile.dart';
-import 'zones_screen.dart';
+import 'offline_zones_screen.dart';
+//import 'zones_screen.dart';
+//import 'routing_zones_screen.dart';
+
+
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -63,13 +67,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: WSSpacing.xl),
           _section('Cartes hors-ligne'),
-          _LinkTile(
+          /*
+		  _LinkTile(
             icon: Icons.terrain_outlined,
             label: 'Zones topographiques',
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const ZonesScreen()),
             ),
-          ),
+          ),*/
+		  _LinkTile(
+			  icon: Icons.layers_outlined,
+			  label: 'Zones hors-ligne',
+			  onTap: () => Navigator.of(context).push(
+				MaterialPageRoute(builder: (_) => const OfflineZonesScreen()),
+			  ),
+		  ),
           _LinkTile(
             icon: Icons.map_outlined,
             label: 'Cache des tuiles de carte',
@@ -142,6 +154,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ));
             },
           ),
+		  
           const SizedBox(height: WSSpacing.xxl),
           const Center(
             child: Text(

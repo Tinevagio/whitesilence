@@ -16,6 +16,7 @@ import 'modules/snow/snow_overlay.dart';
 import 'modules/time/time_controller.dart';
 import 'modules/time/time_overlay.dart';
 import 'shared/settings/user_profile.dart';
+import 'modules/route/route_overlay.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -160,6 +161,7 @@ class _AppEntrypointState extends State<_AppEntrypoint> {
       SnowModuleOverlay(),
       ConditionsModuleOverlay(),
       IdeasModuleOverlay(),
+	  //RouteOverlay(),
     ]);
   }
 }

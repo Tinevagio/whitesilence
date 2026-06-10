@@ -8,6 +8,7 @@ enum ModuleId {
   snow,       // Observations nivologiques (vocales ou rapides) — mes obs + communauté
   conditions, // ex-Névé (conditions + BERA + avalanche, en WebView)
   ideas,      // ex-Ski-touring-live (recommandations d'itinéraires, WebView Streamlit)
+  route,     // calcul itinéraire
   community,  // ⚠️ Déprécié : fusionné dans `snow` depuis la v0.5. Conservé pour
               // compat ascendante (SharedPreferences existantes). Ne plus utiliser.
 }
@@ -40,9 +41,9 @@ class ModuleRegistry extends ChangeNotifier {
   static const List<ModuleInfo> catalog = [
     ModuleInfo(
       id: ModuleId.time,
-      label: 'Temps',
-      icon: Icons.schedule_outlined,
-      description: 'Estimation de temps de parcours (Munter) et isochrones.',
+      label: 'Temps & Itinéraire',
+      icon: Icons.route_outlined,
+      description: 'Isochrones, planification d\'itinéraire et calibration Munter.',
     ),
     ModuleInfo(
       id: ModuleId.snow,
@@ -65,6 +66,12 @@ class ModuleRegistry extends ChangeNotifier {
       description:
           'Suggestions d\'itinéraires selon les conditions et ton niveau.',
     ),
+	/* ModuleInfo(
+      id: ModuleId.route,
+      label: 'Itinéraire',
+      icon: Icons.route_outlined,
+      description: 'Tracé offline suivant les sentiers OSM, avec D+/D- et temps Munter.',
+    ),*/
   ];
 
   final Map<ModuleId, bool> _enabled = {

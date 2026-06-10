@@ -9,6 +9,7 @@ import '../gps/gps_service.dart';
 import '../module_registry.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
+import '../../shared/help/help_screen.dart';
 import '../../shared/settings/settings_screen.dart';
 import 'cached_tile_provider.dart';
 import 'map_module_overlay.dart';
@@ -235,6 +236,17 @@ class _WSMapScreenState extends State<WSMapScreen> {
                     ),
                   ),
                   const SizedBox(width: WSSpacing.sm),
+                  _TopBarButton(
+                    icon: Icons.help_outline,
+                    tooltip: 'Comment ça marche ?',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const HelpScreen(),
+                        fullscreenDialog: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: WSSpacing.xs),
                   _TopBarButton(
                     icon: Icons.my_location,
                     tooltip: 'Recentrer sur ma position',
