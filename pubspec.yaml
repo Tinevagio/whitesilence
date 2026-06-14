@@ -1,7 +1,7 @@
 name: whitesilence
 description: Ski de rando sans inscription, sans tracking, sans bruit. La seule trace, c'est celle dans la neige.
 publish_to: 'none'
-version: 0.1.0+8
+version: 0.1.0+9
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -51,6 +51,10 @@ dependencies:
 dev_dependencies:
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.0
+  flutter_test:
+    sdk: flutter
+  # Si tu veux dart test pur sur les fichiers sans Flutter :
+  test: ^1.24.0
 
 flutter:
   uses-material-design: true

@@ -14,6 +14,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -124,6 +125,9 @@ class TimeController extends ChangeNotifier {
   // (pour ne pas oublier le re-branchement lors d'un rebuild de l'engine)
   bool _calibratorAttached = false;
 
+  bool _restoring = false;
+  MunterEngine? _munterBeingRestored;
+
   void _rebuildEngine() {
     _munter = MunterEngine(munterProfileFrom(_userProfile));
     // Si on avait déjà un calibrateur, on le détache du GPS avant d'en
@@ -135,7 +139,7 @@ class TimeController extends ChangeNotifier {
     // Branche les notifications du calibrator pour que l'UI suive en
     // temps réel + sauver la calibration après chaque update.
     _calibrator.onUpdate = () {
-      _saveSnapshot(); // fire-and-forget, ne bloque pas l'UI
+      _saveSnapshot();
       notifyListeners();
     };
     _calibratorInitialized = true;
@@ -160,6 +164,15 @@ class TimeController extends ChangeNotifier {
     if (_calibratorAttached) return;
     _calibrator.attachToGpsService();
     _calibratorAttached = true;
+    AppLifecycleListener(
+      onInactive: _onAppInactive,
+      onPause:    _onAppInactive,
+      onDetach:   _onAppInactive,
+    );
+  }
+
+  void _onAppInactive() {
+    _saveSnapshot();
   }
 
   @override
@@ -339,41 +352,51 @@ class TimeController extends ChangeNotifier {
   // (< 1 KB). Pas besoin de debouncing complexe.
 
   Future<void> _saveSnapshot() async {
+    if (_restoring) {
+      return;
+    }
     try {
       final snapshot = _munter.toSnapshot();
-      // Skip si pas de mesure (rien à sauver, et évite d'écraser un
-      // snapshot précédent valide par un état vide post-redémarrage).
       final ms = snapshot['measurements'];
-      if (ms is List && ms.isEmpty) return;
+      if (ms is List && ms.isEmpty) {
+        return;
+      }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kMunterSnapshotKey, jsonEncode(snapshot));
     } catch (e) {
-      // Persistance non critique — on log mais on ne fait pas tomber l'app.
-      debugPrint('[time] Save snapshot failed: $e');
     }
   }
 
   Future<void> _restoreSnapshot() async {
+    final targetMunter = _munter;
+    _munterBeingRestored = targetMunter;
+    _restoring = true;
     try {
       final prefs = await SharedPreferences.getInstance();
+
+      if (!identical(_munter, targetMunter)) {
+        return;
+      }
+
       final raw = prefs.getString(_kMunterSnapshotKey);
-      if (raw == null || raw.isEmpty) return;
+      if (raw == null || raw.isEmpty) {
+        return;
+      }
 
       final snapshot = jsonDecode(raw) as Map<String, dynamic>;
-      final ok = _munter.restoreFromSnapshot(snapshot);
+
+      final ok = targetMunter.restoreFromSnapshot(snapshot);
       if (ok) {
-        debugPrint('[time] Calibration Munter restaurée '
-            '(${_munter.calibrationReport()['measurements']} mesures, '
-            '${_munter.calibrationReport()['weight']}).');
         notifyListeners();
       } else {
-        // Signature de profil différente — on jette le vieux snapshot et
-        // on repart proprement.
-        debugPrint('[time] Profil changé, snapshot Munter ignoré.');
         await prefs.remove(_kMunterSnapshotKey);
       }
     } catch (e) {
-      debugPrint('[time] Restore snapshot failed: $e');
+    } finally {
+      _restoring = false;
+      if (identical(_munterBeingRestored, targetMunter)) {
+        _munterBeingRestored = null;
+      }
     }
   }
 

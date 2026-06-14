@@ -221,13 +221,29 @@ class MunterEngine {
         : _params.descentRate;
 
     // ── Sanity checks ────────────────────────────────────────────────────────
-    if (measuredHSpeed     < 0.5 || measuredHSpeed     > 20)   return;
-    if (measuredAscentRate < 50  || measuredAscentRate > 1500) return;
+    //
+    // Seule la vitesse horizontale peut invalider toute la mesure : si on
+    // marche à 0.3 km/h ou 25 km/h, le segment entier est suspect.
+    //
+    // Pour le D+ et D-, on ne rejette PAS la mesure entière si le taux est
+    // irréaliste — on retombe sur le baseline du profil. Raison : sur des
+    // segments courts avec peu de dénivelé (ex: 1m D+ sur 83m en 65s),
+    // upFraction × duration = 0.78s → ascentRate = 4600 m/h → irréaliste,
+    // mais la vitesse horizontale mesurée est valide. Rejeter le segment
+    // entier bloque _calibrationWeight à 0 indéfiniment.
+    if (measuredHSpeed < 0.5 || measuredHSpeed > 20) return;
+
+    final safeAscentRate  = (measuredAscentRate  >= 50 && measuredAscentRate  <= 1500)
+        ? measuredAscentRate
+        : _params.ascentRate;   // fallback baseline si irréaliste
+    final safeDescentRate = (measuredDescentRate >= 50 && measuredDescentRate <= 2000)
+        ? measuredDescentRate
+        : _params.descentRate;  // fallback baseline si irréaliste
 
     final measured = MunterParams(
       horizontalSpeed: measuredHSpeed,
-      ascentRate:      measuredAscentRate,
-      descentRate:     measuredDescentRate,
+      ascentRate:      safeAscentRate,
+      descentRate:     safeDescentRate,
     );
 
     // ── Poids progressif ─────────────────────────────────────────────────────
