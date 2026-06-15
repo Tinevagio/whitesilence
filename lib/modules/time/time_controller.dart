@@ -400,6 +400,70 @@ class TimeController extends ChangeNotifier {
     }
   }
 
+  // ── API cadenas exposée à l'UI ───────────────────────────────────────────
+  //
+  // Le TimeController délègue au MunterEngine et appelle _saveSnapshot()
+  // + notifyListeners() pour que l'UI et la persistence soient synchrones.
+
+  bool get hSpeedLocked   => _munter.hSpeedLocked;
+  bool get ascentLocked   => _munter.ascentLocked;
+  bool get descentLocked  => _munter.descentLocked;
+  double? get hSpeedOverride  => _munter.hSpeedOverride;
+  double? get ascentOverride  => _munter.ascentOverride;
+  double? get descentOverride => _munter.descentOverride;
+  bool get anyLocked => _munter.anyLocked;
+
+  void lockHSpeed(double value) {
+    _munter.lockHSpeed(value);
+    _saveSnapshot();
+    notifyListeners();
+  }
+
+  void lockAscent(double value) {
+    _munter.lockAscent(value);
+    _saveSnapshot();
+    notifyListeners();
+  }
+
+  void lockDescent(double value) {
+    _munter.lockDescent(value);
+    _saveSnapshot();
+    notifyListeners();
+  }
+
+  void unlockHSpeed() {
+    _munter.unlockHSpeed();
+    _saveSnapshot();
+    notifyListeners();
+  }
+
+  void unlockAscent() {
+    _munter.unlockAscent();
+    _saveSnapshot();
+    notifyListeners();
+  }
+
+  void unlockDescent() {
+    _munter.unlockDescent();
+    _saveSnapshot();
+    notifyListeners();
+  }
+
+  /// Mise à jour en temps réel depuis le slider (pas de save à chaque tick,
+  /// save uniquement quand le slider est relâché via les méthodes lock*).
+  void updateHSpeedOverride(double v)  { _munter.updateHSpeedOverride(v);  notifyListeners(); }
+  void updateAscentOverride(double v)  { _munter.updateAscentOverride(v);  notifyListeners(); }
+  void updateDescentOverride(double v) { _munter.updateDescentOverride(v); notifyListeners(); }
+
+  /// Décadenasse tout d'un coup (toggle global "Mode manuel" désactivé).
+  void unlockAll() {
+    _munter.unlockHSpeed();
+    _munter.unlockAscent();
+    _munter.unlockDescent();
+    _saveSnapshot();
+    notifyListeners();
+  }
+
   /// Efface manuellement la calibration sauvegardée.
   /// Utile pour un bouton "Réinitialiser la calibration" dans Réglages.
   Future<void> clearMunterCalibration() async {

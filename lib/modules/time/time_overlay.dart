@@ -709,16 +709,21 @@ class _CalibrationSummary extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
             decoration: BoxDecoration(
-              color: isCalibrated
-                  ? WSColors.powderGreen.withOpacity(0.18)
-                  : WSColors.glacierMid.withOpacity(0.25),
+              color: controller.anyLocked
+                  ? WSColors.sunOrange.withOpacity(0.15)
+                  : isCalibrated
+                      ? WSColors.powderGreen.withOpacity(0.18)
+                      : WSColors.glacierMid.withOpacity(0.25),
               borderRadius: BorderRadius.circular(WSRadius.pill),
             ),
             child: Text(
-              isCalibrated ? '✓ $weight' : 'baseline',
+              controller.anyLocked
+                  ? '🔒 manuel'
+                  : isCalibrated ? '✓ $weight' : 'baseline',
               style: WSText.micro.copyWith(
-                color:
-                    isCalibrated ? WSColors.powderGreen : WSColors.stoneGray,
+                color: controller.anyLocked
+                    ? WSColors.sunOrange
+                    : isCalibrated ? WSColors.powderGreen : WSColors.stoneGray,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -744,27 +749,57 @@ void _openCalibrationSheet(
   );
 }
 
-class _CalibrationSheet extends StatelessWidget {
+// ─── CalibrationSheet avec cadenas ───────────────────────────────────────────
+
+class _CalibrationSheet extends StatefulWidget {
   final TimeController controller;
   const _CalibrationSheet({required this.controller});
 
   @override
+  State<_CalibrationSheet> createState() => _CalibrationSheetState();
+}
+
+class _CalibrationSheetState extends State<_CalibrationSheet> {
+  TimeController get c => widget.controller;
+
+  // Valeurs locales des sliders (mise à jour en temps réel sans sauvegarder
+  // à chaque tick — la sauvegarde intervient quand on pose le cadenas).
+  late double _hSpeedVal;
+  late double _ascentVal;
+  late double _descentVal;
+
+  @override
+  void initState() {
+    super.initState();
+    _hSpeedVal  = c.hSpeedOverride  ?? c.munter.currentParams.horizontalSpeed;
+    _ascentVal  = c.ascentOverride  ?? c.munter.currentParams.ascentRate;
+    _descentVal = c.descentOverride ?? c.munter.currentParams.descentRate;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final report = controller.calibratorReport;
-    final isCalibrated = controller.isCalibrated;
+    final report       = c.calibratorReport;
+    final isCalibrated = c.isCalibrated;
+    final anyLocked    = c.anyLocked;
 
     return Container(
       decoration: const BoxDecoration(
         color: WSColors.snowWhite,
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(WSRadius.xl)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(WSRadius.xl)),
       ),
-      padding: const EdgeInsets.fromLTRB(
-          WSSpacing.xl, WSSpacing.lg, WSSpacing.xl, WSSpacing.xl),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      // Limite la hauteur max à 85% de l'écran et rend le contenu scrollable
+      // pour éviter le overflow quand les sliders sont tous ouverts.
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.85,
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(
+            WSSpacing.xl, WSSpacing.lg, WSSpacing.xl, WSSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+          // ── Poignée ─────────────────────────────────────────────────────
           Center(
             child: Container(
               width: 36, height: 4,
@@ -775,50 +810,144 @@ class _CalibrationSheet extends StatelessWidget {
               ),
             ),
           ),
+
+          // ── Titre + badge calibration ────────────────────────────────────
           Row(
             children: [
               const Icon(Icons.speed, size: 18, color: WSColors.slateDark),
               const SizedBox(width: WSSpacing.sm),
               const Text('Paramètres Munter', style: WSText.title),
               const Spacer(),
-              Flexible(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: WSSpacing.md, vertical: 4),
-                  decoration: BoxDecoration(
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: WSSpacing.md, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isCalibrated
+                      ? WSColors.powderGreen.withOpacity(0.18)
+                      : WSColors.glacierMid.withOpacity(0.25),
+                  borderRadius: BorderRadius.circular(WSRadius.pill),
+                ),
+                child: Text(
+                  isCalibrated
+                      ? '✓ Calibré ${report['poids']}'
+                      : (report['calibré'] ?? 'Baseline'),
+                  style: WSText.caption.copyWith(
                     color: isCalibrated
-                        ? WSColors.powderGreen.withOpacity(0.18)
-                        : WSColors.glacierMid.withOpacity(0.25),
-                    borderRadius: BorderRadius.circular(WSRadius.pill),
-                  ),
-                  child: Text(
-                    isCalibrated
-                        ? '✓ Calibré ${report['poids']}'
-                        : (report['calibré'] ?? 'Baseline'),
-                    style: WSText.caption.copyWith(
-                      color: isCalibrated
-                          ? WSColors.powderGreen
-                          : WSColors.stoneGray,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                        ? WSColors.powderGreen
+                        : WSColors.stoneGray,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: WSSpacing.lg),
-          _StatRow(
-              label: 'Vitesse horizontale',
-              value: report['hSpeed'] ?? '?'),
-          _StatRow(
-              label: 'Dénivelé positif',
-              value: report['ascentRate'] ?? '?'),
-          _StatRow(
-              label: 'Dénivelé négatif',
-              value: report['descentRate'] ?? '?'),
+
+          // ── Toggle global Mode manuel ────────────────────────────────────
+          _ManualModeToggle(
+            anyLocked: anyLocked,
+            onToggle: (enabled) {
+              setState(() {
+                if (enabled) {
+                  // Active tous les cadenas sur les valeurs courantes
+                  _hSpeedVal  = c.munter.effectiveParams.horizontalSpeed;
+                  _ascentVal  = c.munter.effectiveParams.ascentRate;
+                  _descentVal = c.munter.effectiveParams.descentRate;
+                  c.lockHSpeed(_hSpeedVal);
+                  c.lockAscent(_ascentVal);
+                  c.lockDescent(_descentVal);
+                } else {
+                  c.unlockAll();
+                }
+              });
+            },
+          ),
           const SizedBox(height: WSSpacing.md),
+
+          // ── Ligne Vitesse horizontale ────────────────────────────────────
+          _LockableParamRow(
+            label: 'Vitesse horizontale',
+            unit: 'km/h',
+            value: _hSpeedVal,
+            locked: c.hSpeedLocked,
+            min: 1.0,
+            max: 12.0,
+            divisions: 22,
+            displayValue: c.hSpeedLocked
+                ? _hSpeedVal.toStringAsFixed(1)
+                : (report['hSpeed'] ?? '?'),
+            onLockToggle: () => setState(() {
+              if (c.hSpeedLocked) {
+                c.unlockHSpeed();
+              } else {
+                _hSpeedVal = c.munter.effectiveParams.horizontalSpeed;
+                c.lockHSpeed(_hSpeedVal);
+              }
+            }),
+            onChanged: (v) => setState(() {
+              _hSpeedVal = v;
+              c.updateHSpeedOverride(v);
+            }),
+            onChangeEnd: (v) => c.lockHSpeed(v),
+          ),
+
+          // ── Ligne Dénivelé positif ───────────────────────────────────────
+          _LockableParamRow(
+            label: 'Dénivelé positif',
+            unit: 'm/h',
+            value: _ascentVal,
+            locked: c.ascentLocked,
+            min: 100.0,
+            max: 1000.0,
+            divisions: 18,
+            displayValue: c.ascentLocked
+                ? _ascentVal.toStringAsFixed(0)
+                : (report['ascentRate'] ?? '?'),
+            onLockToggle: () => setState(() {
+              if (c.ascentLocked) {
+                c.unlockAscent();
+              } else {
+                _ascentVal = c.munter.effectiveParams.ascentRate;
+                c.lockAscent(_ascentVal);
+              }
+            }),
+            onChanged: (v) => setState(() {
+              _ascentVal = v;
+              c.updateAscentOverride(v);
+            }),
+            onChangeEnd: (v) => c.lockAscent(v),
+          ),
+
+          // ── Ligne Dénivelé négatif ───────────────────────────────────────
+          _LockableParamRow(
+            label: 'Dénivelé négatif',
+            unit: 'm/h',
+            value: _descentVal,
+            locked: c.descentLocked,
+            min: 200.0,
+            max: 1500.0,
+            divisions: 13,
+            displayValue: c.descentLocked
+                ? _descentVal.toStringAsFixed(0)
+                : (report['descentRate'] ?? '?'),
+            onLockToggle: () => setState(() {
+              if (c.descentLocked) {
+                c.unlockDescent();
+              } else {
+                _descentVal = c.munter.effectiveParams.descentRate;
+                c.lockDescent(_descentVal);
+              }
+            }),
+            onChanged: (v) => setState(() {
+              _descentVal = v;
+              c.updateDescentOverride(v);
+            }),
+            onChangeEnd: (v) => c.lockDescent(v),
+          ),
+
+          const SizedBox(height: WSSpacing.md),
+
+          // ── Segments GPS ─────────────────────────────────────────────────
           if (report['segments'] != null)
             Container(
               padding: const EdgeInsets.all(WSSpacing.md),
@@ -830,51 +959,221 @@ class _CalibrationSheet extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Segments GPS',
-                      style: WSText.micro
-                          .copyWith(color: WSColors.stoneGray)),
+                      style: WSText.micro.copyWith(color: WSColors.stoneGray)),
                   const SizedBox(height: 4),
                   Text(report['segments']!, style: WSText.body),
                 ],
               ),
             ),
+
           const SizedBox(height: WSSpacing.md),
+
+          // ── Source altitude ──────────────────────────────────────────────
           Row(
             children: [
-              const Icon(Icons.terrain,
-                  size: 14, color: WSColors.stoneGray),
+              const Icon(Icons.terrain, size: 14, color: WSColors.stoneGray),
               const SizedBox(width: 6),
-              Text(
-                  'Source d\'altitude : ${controller.demSourceLabel}',
+              Text('Source d\'altitude : ${c.demSourceLabel}',
                   style: WSText.caption),
             ],
           ),
           const SizedBox(height: WSSpacing.md),
+
+          // ── Info contextuelle ────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.all(WSSpacing.md),
             decoration: BoxDecoration(
-              color: WSColors.glacierBlueBg,
+              color: anyLocked
+                  ? WSColors.sunOrange.withOpacity(0.08)
+                  : WSColors.glacierBlueBg,
               borderRadius: BorderRadius.circular(WSRadius.md),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.info_outline,
-                    size: 14, color: WSColors.glacierBlue),
+                Icon(
+                  anyLocked ? Icons.lock_outline : Icons.info_outline,
+                  size: 14,
+                  color: anyLocked ? WSColors.sunOrange : WSColors.glacierBlue,
+                ),
                 const SizedBox(width: WSSpacing.sm),
                 Expanded(
                   child: Text(
-                    isCalibrated
-                        ? 'Tes paramètres sont calibrés sur tes propres mesures GPS. '
-                            'Plus tu marches, plus le poids monte (max 80%).'
-                        : 'Marche au moins 3 segments de 50m / 1 min pour démarrer '
-                            'la calibration. Les estimations utilisent pour l\'instant '
-                            'les valeurs Munter standards.',
-                    style: WSText.caption
-                        .copyWith(color: WSColors.glacierBlue),
+                    anyLocked
+                        ? 'Paramètres manuels actifs. La calibration GPS continue '
+                            'en arrière-plan et s\'applique dès que tu décadenasses.'
+                        : isCalibrated
+                            ? 'Paramètres calibrés sur tes mesures GPS. '
+                                'Cadenas un paramètre pour le forcer manuellement.'
+                            : 'Marche au moins 3 segments de 50m / 1 min pour démarrer '
+                                'la calibration. Tu peux aussi forcer les valeurs avec le cadenas.',
+                    style: WSText.caption.copyWith(
+                      color: anyLocked
+                          ? WSColors.sunOrange
+                          : WSColors.glacierBlue,
+                    ),
                   ),
                 ),
               ],
             ),
+          ),
+        ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Toggle global Mode manuel ─────────────────────────────────────────────────
+
+class _ManualModeToggle extends StatelessWidget {
+  final bool anyLocked;
+  final ValueChanged<bool> onToggle;
+  const _ManualModeToggle({required this.anyLocked, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => onToggle(!anyLocked),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(
+            horizontal: WSSpacing.md, vertical: WSSpacing.sm),
+        decoration: BoxDecoration(
+          color: anyLocked
+              ? WSColors.sunOrange.withOpacity(0.10)
+              : WSColors.glacierLight,
+          borderRadius: BorderRadius.circular(WSRadius.md),
+          border: Border.all(
+            color: anyLocked
+                ? WSColors.sunOrange.withOpacity(0.40)
+                : WSColors.glacierMid,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              anyLocked ? Icons.lock : Icons.lock_open,
+              size: 16,
+              color: anyLocked ? WSColors.sunOrange : WSColors.stoneGray,
+            ),
+            const SizedBox(width: WSSpacing.sm),
+            Expanded(
+              child: Text(
+                anyLocked ? 'Mode manuel actif' : 'Mode manuel',
+                style: WSText.body.copyWith(
+                  color: anyLocked ? WSColors.sunOrange : WSColors.slateDark,
+                  fontWeight: anyLocked ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ),
+            Switch(
+              value: anyLocked,
+              onChanged: onToggle,
+              activeColor: WSColors.sunOrange,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Ligne paramètre avec cadenas individuel ───────────────────────────────────
+
+class _LockableParamRow extends StatelessWidget {
+  final String label;
+  final String unit;
+  final double value;
+  final bool locked;
+  final double min;
+  final double max;
+  final int divisions;
+  final String displayValue;
+  final VoidCallback onLockToggle;
+  final ValueChanged<double> onChanged;
+  final ValueChanged<double> onChangeEnd;
+
+  const _LockableParamRow({
+    required this.label,
+    required this.unit,
+    required this.value,
+    required this.locked,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.displayValue,
+    required this.onLockToggle,
+    required this.onChanged,
+    required this.onChangeEnd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: WSSpacing.xs),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Label + valeur + cadenas ───────────────────────────────────
+          Row(
+            children: [
+              Expanded(
+                child: Text(label, style: WSText.body),
+              ),
+              Text(
+                '$displayValue $unit',
+                style: WSText.body.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: locked ? WSColors.sunOrange : WSColors.slateDark,
+                ),
+              ),
+              const SizedBox(width: WSSpacing.sm),
+              GestureDetector(
+                onTap: onLockToggle,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: locked
+                        ? WSColors.sunOrange.withOpacity(0.12)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(WSRadius.sm),
+                  ),
+                  child: Icon(
+                    locked ? Icons.lock : Icons.lock_open_outlined,
+                    size: 16,
+                    color: locked ? WSColors.sunOrange : WSColors.stoneGray,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // ── Slider (visible uniquement si cadenassé) ───────────────────
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            child: locked
+                ? SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      activeTrackColor: WSColors.sunOrange,
+                      thumbColor: WSColors.sunOrange,
+                      inactiveTrackColor: WSColors.sunOrange.withOpacity(0.20),
+                      overlayColor: WSColors.sunOrange.withOpacity(0.12),
+                      trackHeight: 2,
+                    ),
+                    child: Slider(
+                      value: value.clamp(min, max),
+                      min: min,
+                      max: max,
+                      divisions: divisions,
+                      onChanged: onChanged,
+                      onChangeEnd: onChangeEnd,
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),
@@ -895,8 +1194,7 @@ class _StatRow extends StatelessWidget {
         children: [
           Expanded(child: Text(label, style: WSText.body)),
           Text(value,
-              style: WSText.body
-                  .copyWith(fontWeight: FontWeight.w600)),
+              style: WSText.body.copyWith(fontWeight: FontWeight.w600)),
         ],
       ),
     );

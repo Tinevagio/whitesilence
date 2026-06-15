@@ -121,6 +121,22 @@ class MunterEngine {
   /// les paramètres récents.
   int _acceptedCount = 0;
 
+  // ── Cadenas par paramètre ─────────────────────────────────────────────────
+  //
+  // Quand un paramètre est cadenassé :
+  //   - la valeur forcée (_xxxOverride) est utilisée dans estimateSeconds()
+  //     à la place de la valeur calibrée/baseline.
+  //   - la calibration GPS continue de tourner normalement en arrière-plan
+  //     (les mesures s'accumulent dans _measurements).
+  //   - quand on décadenasse, _recalibrate() est appelé immédiatement avec
+  //     toutes les mesures accumulées → les données GPS s'appliquent aussitôt.
+  bool   _hSpeedLocked  = false;
+  bool   _ascentLocked  = false;
+  bool   _descentLocked = false;
+  double? _hSpeedOverride;
+  double? _ascentOverride;
+  double? _descentOverride;
+
   MunterEngine(this.profile) : _params = _resolveBaseParams(profile);
 
   MunterParams get currentParams     => _params;
@@ -128,15 +144,34 @@ class MunterEngine {
   bool         get isCalibrated      => _calibrationWeight >= 0.5;
   int          get acceptedCount     => _acceptedCount;
 
+  // Getters cadenas
+  bool    get hSpeedLocked   => _hSpeedLocked;
+  bool    get ascentLocked   => _ascentLocked;
+  bool    get descentLocked  => _descentLocked;
+  double? get hSpeedOverride => _hSpeedOverride;
+  double? get ascentOverride => _ascentOverride;
+  double? get descentOverride => _descentOverride;
+  bool    get anyLocked      => _hSpeedLocked || _ascentLocked || _descentLocked;
+
+  /// Paramètres effectivement utilisés pour les calculs (override si cadenassé,
+  /// sinon calibré/baseline).
+  MunterParams get effectiveParams => MunterParams(
+    horizontalSpeed: _hSpeedLocked  && _hSpeedOverride  != null ? _hSpeedOverride!  : _params.horizontalSpeed,
+    ascentRate:      _ascentLocked  && _ascentOverride  != null ? _ascentOverride!  : _params.ascentRate,
+    descentRate:     _descentLocked && _descentOverride != null ? _descentOverride! : _params.descentRate,
+  );
+
   double estimateSeconds({
     required double distanceM,
     required double elevGain,
     required double elevLoss,
   }) {
+    // Utilise effectiveParams : override si cadenassé, calibré/baseline sinon.
+    final p      = effectiveParams;
     final distKm = distanceM / 1000.0;
-    final tHoriz = distKm / _params.horizontalSpeed;
-    final tVert  = (elevGain / _params.ascentRate)
-                 + (elevLoss / _params.descentRate);
+    final tHoriz = distKm / p.horizontalSpeed;
+    final tVert  = (elevGain / p.ascentRate)
+                 + (elevLoss / p.descentRate);
     final tBase  = tHoriz > tVert ? tHoriz : tVert;
     final factor = _terrainFactor[profile.terrain]!;
     return tBase * factor * 3600;
@@ -145,7 +180,7 @@ class MunterEngine {
   double maxHorizontalDistance(double budgetSeconds) {
     final budgetH = budgetSeconds / 3600.0;
     final factor  = _terrainFactor[profile.terrain]!;
-    return (_params.horizontalSpeed * budgetH / factor) * 1000.0;
+    return (effectiveParams.horizontalSpeed * budgetH / factor) * 1000.0;
   }
 
   // ── Calibration ────────────────────────────────────────────────────────────
@@ -170,6 +205,49 @@ class MunterEngine {
     }
     _recalibrate();
   }
+
+  // ── API cadenas ────────────────────────────────────────────────────────────
+
+  /// Cadenas la vitesse horizontale à la valeur [value].
+  /// La calibration GPS continue en arrière-plan.
+  void lockHSpeed(double value) {
+    _hSpeedLocked   = true;
+    _hSpeedOverride = value;
+  }
+
+  void lockAscent(double value) {
+    _ascentLocked   = true;
+    _ascentOverride = value;
+  }
+
+  void lockDescent(double value) {
+    _descentLocked   = true;
+    _descentOverride = value;
+  }
+
+  /// Décadenasse et applique immédiatement les mesures GPS accumulées.
+  void unlockHSpeed() {
+    _hSpeedLocked   = false;
+    _hSpeedOverride = null;
+    if (_measurements.isNotEmpty) _recalibrate();
+  }
+
+  void unlockAscent() {
+    _ascentLocked   = false;
+    _ascentOverride = null;
+    if (_measurements.isNotEmpty) _recalibrate();
+  }
+
+  void unlockDescent() {
+    _descentLocked   = false;
+    _descentOverride = null;
+    if (_measurements.isNotEmpty) _recalibrate();
+  }
+
+  /// Mise à jour d'une valeur cadenassée (slider déplacé).
+  void updateHSpeedOverride(double value)  => _hSpeedOverride  = value;
+  void updateAscentOverride(double value)  => _ascentOverride  = value;
+  void updateDescentOverride(double value) => _descentOverride = value;
 
   void _recalibrate() {
     if (_measurements.length < 3) return;
@@ -286,6 +364,13 @@ class MunterEngine {
       'l': m.elevLoss,
       's': m.actualSeconds,
     }).toList(),
+    // Cadenas — persistés pour survivre à un kill
+    'hSpeedLocked':    _hSpeedLocked,
+    'ascentLocked':    _ascentLocked,
+    'descentLocked':   _descentLocked,
+    'hSpeedOverride':  _hSpeedOverride,
+    'ascentOverride':  _ascentOverride,
+    'descentOverride': _descentOverride,
   };
 
   bool restoreFromSnapshot(Map<String, dynamic> snapshot) {
@@ -318,6 +403,15 @@ class MunterEngine {
     _acceptedCount = savedAccepted ?? _measurements.length;
 
     if (_measurements.isNotEmpty) _recalibrate();
+
+    // Restaure les cadenas
+    _hSpeedLocked    = snapshot['hSpeedLocked']  as bool? ?? false;
+    _ascentLocked    = snapshot['ascentLocked']  as bool? ?? false;
+    _descentLocked   = snapshot['descentLocked'] as bool? ?? false;
+    _hSpeedOverride  = (snapshot['hSpeedOverride']  as num?)?.toDouble();
+    _ascentOverride  = (snapshot['ascentOverride']  as num?)?.toDouble();
+    _descentOverride = (snapshot['descentOverride'] as num?)?.toDouble();
+
     return true;
   }
 }
