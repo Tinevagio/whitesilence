@@ -867,14 +867,13 @@ class _CalibrationSheetState extends State<_CalibrationSheet> {
           // ── Ligne Vitesse horizontale ────────────────────────────────────
           _LockableParamRow(
             label: 'Vitesse horizontale',
-            unit: 'km/h',
             value: _hSpeedVal,
             locked: c.hSpeedLocked,
             min: 1.0,
             max: 12.0,
             divisions: 22,
             displayValue: c.hSpeedLocked
-                ? _hSpeedVal.toStringAsFixed(1)
+                ? '${_hSpeedVal.toStringAsFixed(1)} km/h'
                 : (report['hSpeed'] ?? '?'),
             onLockToggle: () => setState(() {
               if (c.hSpeedLocked) {
@@ -894,14 +893,13 @@ class _CalibrationSheetState extends State<_CalibrationSheet> {
           // ── Ligne Dénivelé positif ───────────────────────────────────────
           _LockableParamRow(
             label: 'Dénivelé positif',
-            unit: 'm/h',
             value: _ascentVal,
             locked: c.ascentLocked,
             min: 100.0,
             max: 1000.0,
             divisions: 18,
             displayValue: c.ascentLocked
-                ? _ascentVal.toStringAsFixed(0)
+                ? '${_ascentVal.toStringAsFixed(0)} m/h'
                 : (report['ascentRate'] ?? '?'),
             onLockToggle: () => setState(() {
               if (c.ascentLocked) {
@@ -921,14 +919,13 @@ class _CalibrationSheetState extends State<_CalibrationSheet> {
           // ── Ligne Dénivelé négatif ───────────────────────────────────────
           _LockableParamRow(
             label: 'Dénivelé négatif',
-            unit: 'm/h',
             value: _descentVal,
             locked: c.descentLocked,
             min: 200.0,
             max: 1500.0,
             divisions: 13,
             displayValue: c.descentLocked
-                ? _descentVal.toStringAsFixed(0)
+                ? '${_descentVal.toStringAsFixed(0)} m/h'
                 : (report['descentRate'] ?? '?'),
             onLockToggle: () => setState(() {
               if (c.descentLocked) {
@@ -1085,7 +1082,6 @@ class _ManualModeToggle extends StatelessWidget {
 
 class _LockableParamRow extends StatelessWidget {
   final String label;
-  final String unit;
   final double value;
   final bool locked;
   final double min;
@@ -1098,7 +1094,6 @@ class _LockableParamRow extends StatelessWidget {
 
   const _LockableParamRow({
     required this.label,
-    required this.unit,
     required this.value,
     required this.locked,
     required this.min,
@@ -1124,7 +1119,7 @@ class _LockableParamRow extends StatelessWidget {
                 child: Text(label, style: WSText.body),
               ),
               Text(
-                '$displayValue $unit',
+                displayValue,
                 style: WSText.body.copyWith(
                   fontWeight: FontWeight.w600,
                   color: locked ? WSColors.sunOrange : WSColors.slateDark,

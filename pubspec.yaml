@@ -1,7 +1,7 @@
 name: whitesilence
 description: Ski de rando sans inscription, sans tracking, sans bruit. La seule trace, c'est celle dans la neige.
 publish_to: 'none'
-version: 0.1.0+9
+version: 0.1.0+10
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -13,11 +13,11 @@ dependencies:
     sdk: flutter
 
   # Carte & GPS
-  flutter_map: ^7.0.0
+  flutter_map: ^8.3.0
   # Note : on n'utilise PLUS flutter_map_cancellable_tile_provider depuis
   # qu'on a notre CachedTileProvider maison (cache disque persistant).
   latlong2: ^0.9.1
-  geolocator: ^12.0.0
+  geolocator: ^14.0.3
 
   # Stockage local
   sqflite: ^2.3.0
@@ -26,17 +26,17 @@ dependencies:
   shared_preferences: ^2.2.0
 
   # Module time (Phase 1) — calculs Munter + isochrones + HGT
-  archive: ^3.4.0           # décompression .hgt.gz depuis AWS Skadi
+  archive: ^4.0.9           # décompression .hgt.gz depuis AWS Skadi
 
   # Module conditions (Phase 3) — WebView qui charge le frontend HTML servi
   # par le backend Névé. Voir docs/PHASE3_TEST.md.
   webview_flutter: ^4.10.0
 
   # Module snow (Phase 2) — observations vocales + IA + partage
-  flutter_dotenv: ^5.1.0     # gestion des clés API (.env)
+  flutter_dotenv: ^6.0.1     # gestion des clés API (.env)
   flutter_sound: ^9.0.0      # enregistrement audio
   just_audio: ^0.10.5        # lecture des bips de feedback
-  permission_handler: ^11.0.0 # permission micro
+  permission_handler: ^12.0.3 # permission micro
   supabase_flutter: ^2.12.0  # partage anonyme des obs
 
   # Modules — seront activés au fil des phases
@@ -49,7 +49,7 @@ dependencies:
   url_launcher: ^6.3.0    # ouvre URLs Camptocamp/Skitour depuis Idées
 
 dev_dependencies:
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.0
   flutter_test:
     sdk: flutter

@@ -138,7 +138,7 @@ class _WSMapScreenState extends State<WSMapScreen> {
 
   LatLng? _pixelToLatLng(Offset pixel) {
     try {
-      return _mapCtrl.camera.pointToLatLng(Point(pixel.dx, pixel.dy));
+      return _mapCtrl.camera.offsetToCrs(pixel);
     } catch (_) {
       return null;
     }
